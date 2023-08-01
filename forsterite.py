@@ -1,10 +1,9 @@
 # Calculates the thermodynamic properties and opacity of forsterite using the ANEOS-2019 model and Kraus (2012)
-import matplotlib.pyplot as plt
 import numpy as np
-from scipy.interpolate import RegularGridInterpolator
+from scipy.interpolate import RegularGridInterpolator, interp1d
 from scipy.optimize import minimize
 import woma
-from unyt import g, cm, K, J, kg, Pa
+from unyt import g, cm, K, J, kg, Pa, m
 
 import sys
 import os
@@ -43,7 +42,7 @@ woma.load_eos_tables()
 NewEOS.P, NewEOS.S = NewEOS.P * 1e9, NewEOS.S * 1e6
 NewEOS.vc.Sl, NewEOS.vc.Sv = NewEOS.vc.Sl * 1e6, NewEOS.vc.Sv * 1e6
 NewEOS.vc.Pl, NewEOS.vc.Pv = NewEOS.vc.Pl * 1e9, NewEOS.vc.Pv * 1e9
-NewEOS.cp.P, NewEOS.cp.S = NewEOS.cp.P * 1e9, NewEOS.cp.S * 1e6
+P_critical_point, S_critical_point = NewEOS.cp.P * 1e9, NewEOS.cp.S * 1e6
 
 print('EOS tables loaded')
 
@@ -51,9 +50,8 @@ print('EOS tables loaded')
 # calculates rho and T from S and P from the NewEOS table
 # does not use unyt
 def reverse_EOS_table(S, P):
-
     # calculates the log of the error between the target (S,P) and all the points in the EOS table
-    log_error = np.log10(np.abs(NewEOS.S - S)/S + np.abs(NewEOS.P - P)/P)
+    log_error = np.log10(np.abs(NewEOS.S - S) / S + np.abs(NewEOS.P - P) / P)
 
     # finds the point in the table with the lowest error (hence closest to the target (S,P))
     k = log_error.argmin()
@@ -66,15 +64,15 @@ def reverse_EOS_table(S, P):
     P_woma = lambda x: woma.P_T_rho(x[1], x[0] * 1e3, 400)
 
     # function that calculates the error between guess and target (S,P)
-    woma_error = lambda x: np.abs(S_woma(x) - S)/S + np.abs(P_woma(x) - P)/P
+    woma_error = lambda x: np.abs(S_woma(x) - S) / S + np.abs(P_woma(x) - P) / P
 
     # uses scipy to minimize this error
     res = minimize(woma_error, np.array([rho_guess, T_guess]), method='Nelder-Mead')
     rho_res, T_res = res.x
 
     # checks error to make sure it is not too big
-    S_error = np.abs(S_woma([rho_res, T_res]) - S)/P
-    P_error = np.abs(P_woma([rho_res, T_res]) - P)/P
+    S_error = np.abs(S_woma([rho_res, T_res]) - S) / P
+    P_error = np.abs(P_woma([rho_res, T_res]) - P) / P
     if S_error > 1 or P_error > 1:
         print(f'ERROR: error at P = {P} S = {S} exceeds 1')
     elif S_error > 0.1 or P_error > 0.1:
@@ -133,8 +131,118 @@ def T(S, P):
     return T_interpolation(SP) * K
 
 
-def test():
+# defines the vapor dome - giving P as a function of S
+S_vapor_dome = np.concatenate([[0], np.flip(NewEOS.vc.Sl), NewEOS.vc.Sv])
+P_vapor_dome = np.concatenate([[1e-7], np.flip(NewEOS.vc.Pl), NewEOS.vc.Pv])
+S_P_vapor_dome = interp1d(S_vapor_dome, P_vapor_dome)
 
+
+# finds the phase
+# 0 : invalid region
+# 1 : liquid/solid
+# 2 : liquid vapor mix
+# 3 : vapor
+def phase(S, P):
+    P.convert_to_units(Pa)
+    S.convert_to_units(J / K / kg)
+
+    min_P = 1e-5  # pressures below this are invalid
+
+    result = np.zeros_like(P)
+    result = np.where(P <= min_P, 0, result)
+    result = np.where(np.logical_and(P < S_P_vapor_dome(S), P > min_P), 2, result)
+    result = np.where(np.logical_and(P > S_P_vapor_dome(S), S < S_critical_point), 1, result)
+    result = np.where(np.logical_and(P > S_P_vapor_dome(S), S > S_critical_point), 3, result)
+
+    return result
+
+
+# calculates the absorption of the vapor
+# does not use unyt
+def alpha_v(rho, T):
+    B0 = 6e17  # m^-1
+    B1, B2 = 37, -11.6
+    rho_n, T_n = 1.9, 4150  # g/cm^3, K
+    r, t = rho / rho_n, T / T_n
+
+    return B0 * (r ** (1 / 3)) * t * np.exp(-B1 / t) * np.exp(-B2 * (r / t))
+
+
+# gives the vapor dome - giving S as a function of P for the liquid and vapor parts
+PS_vapor_dome_l, PS_vapor_dome_v = interp1d(NewEOS.vc.Pl, NewEOS.vc.Sl), interp1d(NewEOS.vc.Pv, NewEOS.vc.Sv)
+
+
+# wrapper function for the above function - can deal with values outside the range of the curve
+def vapor_curve_S(P, phase='l'):
+    res = None
+    if phase == 'l':
+        res = np.piecewise(P,
+                           [P < 2e-6, np.logical_and(P > 2e-6, P < P_critical_point), P > P_critical_point],
+                           [2251, PS_vapor_dome_l, S_critical_point])
+    if phase == 'v':
+        res = np.piecewise(P,
+                           [P < 2e-6, np.logical_and(P > 2e-6, P < P_critical_point), P > P_critical_point],
+                           [16218, PS_vapor_dome_v, S_critical_point])
+    return res
+
+
+# calculates the density of a liquid on the vapor curve as a function of P
+P_rho_vapor_curve_l = interp1d(NewEOS.vc.Pl, NewEOS.vc.rl)
+
+
+# wrapper for the above function - can deal with values outside the range of the curve
+def rho_liquid_vc(P):
+    return np.piecewise(P,
+                        [P < 1.7e-6, np.logical_and(P > 1.7e-6, P < NewEOS.vc.Pl[0]), P > NewEOS.vc.Pl[0]],
+                        [3.11, P_rho_vapor_curve_l, 0.57])
+
+
+# calculates the absorption of the liquid vapor mix
+# does not use unyt
+def alpha_l(rho, P, S, D0):
+    # uses the lever rule to calculate the vapor quality
+    Sl = vapor_curve_S(P, phase='l')
+    Sv = vapor_curve_S(P, phase='v')
+    vq = np.where(P < P_critical_point, (S - Sl) / (Sv - Sl), 0)
+
+    # calculates the liquid volume fraction from the vapor quality
+    rho_l = rho_liquid_vc(P)
+    lvf = (1 - vq) * (rho / rho_l)
+    return (6 / (4 * D0)) * lvf
+
+
+# calculates the absorption of a substance
+# uses unyt
+def alpha(rho, T, P, S, D0=1e-3):
+
+    rho.convert_to_cgs()
+    T.convert_to_units(K)
+    P.convert_to_units(Pa)
+    S.convert_to_units(J/K/kg)
+
+    rho, T, P, S = np.array(rho), np.array(T), np.array(P), np.array(S)
+
+    min_P = 1e-5
+
+    phase = np.zeros_like(rho)
+    phase = np.where(P <= min_P, 0, phase)
+    phase = np.where(np.logical_and(P < S_P_vapor_dome(S), P > min_P), 2, phase)
+    phase = np.where(np.logical_and(P > S_P_vapor_dome(S), S < S_critical_point), 1, phase)
+    phase = np.where(np.logical_and(P > S_P_vapor_dome(S), S > S_critical_point), 3, phase)
+
+    result = np.zeros_like(rho)
+    result = np.where(phase == 0, 0, result)
+    result = np.where(phase == 1, 1e12, result)
+    if D0 != 0:
+        result = np.where(phase == 2, alpha_v(rho, T) + alpha_l(rho, P, S, D0), result)
+    else:
+        result = np.where(phase == 2, alpha_v(rho, T), result)
+    result = np.where(phase == 3, alpha_v(rho, T), result)
+
+    return result * (m ** -1)
+
+
+def test():
     S_woma = lambda x: woma.s_rho_T(x[0] * 1e3, x[1], 400)
     P_woma = lambda x: woma.P_T_rho(x[1], x[0] * 1e3, 400)
 

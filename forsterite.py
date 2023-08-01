@@ -258,5 +258,8 @@ def test():
 
     test_reverse_EOS(1e-5, 2900)
 
+    print(alpha(1e-5*g*cm**-3, 2900*K, 1e3*Pa, 9000*J/K/kg))
+    print(alpha(1e-5*g*cm**-3, 2900*K, 1e3*Pa, 9000*J/K/kg, D0=0))
+
 
 test()

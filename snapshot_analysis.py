@@ -2,7 +2,6 @@
 import swiftsimio as sw
 from matplotlib.colors import LogNorm, SymLogNorm
 from swiftsimio.visualisation.slice import slice_gas
-from swiftsimio.visualisation.projection import project_gas
 from swiftsimio.visualisation.rotation import rotation_matrix_from_vector
 import woma
 from unyt import Rearth, Pa, K, kg, J, m, s, g, cm
@@ -12,6 +11,7 @@ M_earth = unyt.M_earth
 
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.optimize import curve_fit
 
 
 data_labels = {
@@ -71,6 +71,9 @@ class snapshot:
         self.calculate_EOS()
         self.calculate_velocities()
 
+        self.HD_limit_R, self.HD_limit_z = self.particle_density_analysis()
+        self.best_fit_rotation_curve, self.CoRoL = self.rotational_analysis()
+
     # calculates the centre of mass in the snapshot
     def get_center_of_mass(self):
 
@@ -102,10 +105,9 @@ class snapshot:
 
     # calculates the EOS for all particles
     def calculate_EOS(self):
-        gas = self.data.gas
-
         print('Applying EOS to particles...')
 
+        gas = self.data.gas
         woma.load_eos_tables()
         gas.internal_energies.convert_to_mks()
         gas.densities.convert_to_mks()
@@ -169,6 +171,109 @@ class snapshot:
         gas.vertical_velocity_mass_weighted = gas.vertical_velocity * gas.masses
 
         self.center_of_mass.convert_to_units(Rearth)
+
+    # find the regions in the snapshot where the particle density is sufficient to analyse
+    def particle_density_analysis(self):
+
+        # sets up the particle distribution histogram as a function of radius
+        R_bins = np.logspace(-2, 2, num=50)
+        R_hist = np.histogram(self.R_xy, R_bins)
+
+        # R_hist_x is the outer radius of the bin, R_hist_y is the particle area density in the bin
+        R_hist_x, R_hist_y = np.zeros_like(R_hist[0], dtype=float), np.array(R_hist[0], dtype=float)
+
+        # calculates the particle area density for each bin
+        for i in range(len(R_hist[0])):
+            R_in, R_out = R_hist[1][i], R_hist[1][i + 1]
+            area = np.pi * (R_out ** 2 - R_in ** 2)
+            R_hist_y[i], R_hist_x[i] = R_hist_y[i] / area, R_out
+
+        # finds the radius at which the particle density drops below a certain density (in particles per Rearth ** 2)
+        critical_density = 3
+        R_HD_region_mask = R_hist_y > critical_density
+        R_HD_limit = R_bins[np.argmin(R_HD_region_mask) - 1]
+
+        # sets up the histogram as a function of height
+        n_z = 100
+        z_bins = np.array((self.box_size[2] / n_z) * np.arange(-n_z, n_z + 1))
+        z_hist = np.histogram(self.z.value, z_bins)
+        z_area = np.array(self.box_size[0] * (self.box_size[2] / n_z))
+
+        # populates the histogram array
+        z_hist_x, z_hist_y = np.array(z_hist[1][:-1], dtype=float), np.array(z_hist[0] / z_area, dtype=float)
+
+        # finds the heights at which the particle density drops below a certain density (in particles per Rearth ** 2)
+        z_HD_mask_min = (z_hist_y > critical_density) & (z_hist_x < 0)
+        z_HD_mask_max = (z_hist_y < critical_density) & (z_hist_x > 0)
+        z_HD_min, z_HD_max = z_bins[np.argmax(z_HD_mask_min)], z_bins[np.argmax(z_HD_mask_max)]
+
+        # gets the average of the heights
+        z_HD_limit = (np.abs(z_HD_min) + np.abs(z_HD_max)) / 2
+
+        return R_HD_limit, z_HD_limit
+
+    # analyses the rotation of the particles to produce a best fit rotation curve
+    def rotational_analysis(self, plot_output=False, save=False):
+
+        # gets the particles in a valid region and takes the log of the cylindrical radius and angular velocity
+        midplane_mask = (np.abs(self.z) < 0.5 * Rearth) & (self.R_xy < self.HD_limit_R * Rearth)
+        log_R, log_omega = np.log10(self.R_xy[midplane_mask]), np.log10(self.data.gas.angular_velocity[midplane_mask])
+
+        # removes invalid values (NaN and inf)
+        nan_inf_mask = np.isnan(log_R) | np.isnan(log_omega) | np.isinf(log_R) | np.isinf(log_omega)
+        log_R, log_omega = log_R[~nan_inf_mask], log_omega[~nan_inf_mask]
+
+        # the model used to fit the particle rotation
+        # has a constant co-rotating inner section and a power law outer section
+        def two_lines(x, a, b, c):
+            constant = a
+            linear = a - c * (x - b)
+            return np.minimum(constant, linear)
+
+        # fits the particle rotation to the model
+        try:
+            fit = curve_fit(two_lines, log_R, log_omega, p0=(-3.3, 0, 1.8))
+            a0, b0, c0 = fit[0][0], fit[0][1], fit[0][2]
+        except TypeError:
+            print('ERROR: UNABLE TO MODEL OMEGA')
+            a0, b0, c0 = 0, 0, 0
+
+        # rotation curve function (uses unyt)
+        def best_fit(R):
+            R.convert_to_units(Rearth)
+            return (10 ** (two_lines(np.log10(R.value), a0, b0, c0))) * (s ** -1)
+        CoRoL = b0 * Rearth
+
+        omega_keplerian = lambda R: np.sqrt((6.674e-11 * (self.total_mass.value / 5.9722e24)) / ((R * 6371000) ** 3))
+
+        x2 = np.logspace(b0, 2)
+        x1 = np.logspace(-2, b0)
+
+        if plot_output:
+
+            rand = np.random.random(len(self.R_xy))
+            plot_mask = (((rand < 0.02) & (self.R_xy < 1)) | ((rand < 0.3) & (self.R_xy > 1))) & \
+                        (np.abs(self.z) < 0.5 * Rearth)
+
+            plt.scatter(self.R_xy[plot_mask], self.data.gas.angular_velocity[plot_mask], s=0.2, c='blue', marker='o')
+            plt.plot(x2, best_fit(x2), linestyle='--', color='red', label='Best fit rotation curve')
+            plt.plot(x2, omega_keplerian(x2), linestyle='--', color='black', label='Keplerian rotation curve')
+            plt.plot(x1, np.full_like(x1, 10 ** a0), 'r--')
+            plt.xlabel('Cyl. Radius ($R_{\oplus}$)')
+            plt.ylabel('Angular velocity (rad/s)')
+            plt.axvspan(10, 100, alpha=0.5, color='grey')
+            plt.xlim([1e-1, 1e2])
+            plt.ylim([1e-8, 1e-2])
+            plt.legend()
+            plt.xscale('log')
+            plt.yscale('log')
+
+            if save:
+                plt.savefig('plots/plot.png', bbox_inches='tight')
+            else:
+                plt.show()
+
+        return best_fit, CoRoL
 
 
 # class that stores a 2D slice of the SWIFT snapshot used for plotting and analysis

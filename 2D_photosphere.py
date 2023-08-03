@@ -6,11 +6,11 @@ from matplotlib import ticker
 from scipy.interpolate import interp1d
 from swiftsimio.visualisation.rotation import rotation_matrix_from_vector
 from swiftsimio.visualisation.slice import slice_gas
-from unyt import cm, g, Rearth, J, K, kg
+from unyt import cm, g, Rearth, J, K, kg, G
 from tqdm import tqdm
 
-from snapshot_analysis import snapshot
-
+from snapshot_analysis import snapshot, gas_slice
+from forsterite import rho
 
 class photosphere:
 
@@ -85,7 +85,7 @@ class photosphere:
             return data
 
         # loads phi averaged data
-        self.data = get_averaged_data(1)
+        self.data = get_averaged_data(10)
 
         # removes half the data array
         for k in self.data.keys():
@@ -107,9 +107,15 @@ class photosphere:
 
         print('Data loaded')
 
-        self.extrapolate_entropy(10 * Rearth, 2 * Rearth)
+        self.extrapolate_entropy(self.snapshot.HD_limit_R * 0.9, self.snapshot.HD_limit_z * 0.9)
+        self.plot('s')
 
-        plt.imshow(self.data['s'].value, cmap='plasma')
+        self.extrapolate_pressure(self.snapshot.HD_limit_R, self.snapshot.HD_limit_z)
+        self.plot('P')
+
+    def plot(self, parameter):
+        z = np.where(np.sqrt(self.data['R'] ** 2 + self.data['z'] ** 2) < 2*Rearth, np.NaN, self.data[parameter].value)
+        plt.imshow(np.log10(z), cmap='jet')
         plt.show()
 
     # converts r and theta values into indexes compatible with the data array
@@ -119,40 +125,101 @@ class photosphere:
         i_z = np.int32((z + self.size) / self.cell_size)
         return i_z, i_R
 
-    # extrapolates the entropy outwards
+    # converts R and z values into indexes compatible with the data array
+    def index_cylinder(self, R, z):
+        i_R = np.int32(R / self.cell_size)
+        i_z = np.int32((z + self.size) / self.cell_size)
+        return i_z, i_R
+
+    # extrapolates entropy adiabatically with elliptic coords
     def extrapolate_entropy(self, R_min, z_min):
-        print('Extrapolating entropy...')
 
-        # mask of all points outside the high definition region
+        n_v = 400
+        v = np.arange(n_v + 1) * (np.pi/n_v) - np.pi / 2
+        a = np.sqrt(R_min ** 2 - z_min ** 2)
+        u = np.arccosh(R_min/a)
+        R = a * np.cosh(u) * np.cos(v) * 0.98
+        z = a * np.sinh(u) * np.sin(v) * 0.98
+
+        indexes = self.index_cylinder(R, z)
+        s = self.data['s'][tuple(indexes)]
+        s_at_boundary = interp1d(v, s)
+
+        x, y = self.data['R'], self.data['z']
+        A2_v = np.sign(y) * np.arccos((np.sqrt((x+a)**2 + y**2) - np.sqrt((x-a)**2 + y**2)) / (2*a))
+
+        s_extrapolation = s_at_boundary(A2_v)
         extrapolation_mask = ((self.data['R'] / R_min) ** 2 + (self.data['z'] / z_min) ** 2 > 1)
-        plot_mask = ((self.data['R'] / R_min) ** 2 + (self.data['z'] / z_min) ** 2 > 0.5)
 
-        # gets the r and theta values along the extrapolation boundary
-        n_theta = 100
-        A1_theta = np.arange(0, n_theta + 1) * ((np.pi) / n_theta)
-        A1_x = (R_min * 0.98 * np.sin(A1_theta)) / self.cell_size
-        A1_y = (z_min * 0.98 * np.cos(A1_theta)) / self.cell_size - self.resolution / 2
-
-        # gets the entropy on the extrapolation boundary
-        indexes = (np.int32(A1_y), np.int32(A1_x))
-        A1_s = self.data['s'][tuple(indexes)]
-        self.data['s'][tuple(indexes)] = np.NaN
-
-        # creates a function that gets the entropy on the extrapolation boundary as a function of theta
-        s_interp = interp1d(A1_theta, A1_s)
-        s_extrapolation = s_interp(self.data['theta'])
-
-
-
-        # extrapolates the entropy outwards
         self.data['s'] = np.where(extrapolation_mask, s_extrapolation, self.data['s']) * J / K / kg
-        self.data['s'] = np.where(plot_mask, self.data['s'], np.NaN) * J / K / kg
 
-        plt.imshow(self.data['s'].value, cmap='gist_rainbow')
-        plt.show()
-        plt.plot(A1_theta, A1_s)
-        plt.show()
+    def dPdR(self, P, S, R, z):
+        omega = self.snapshot.best_fit_rotation_curve(R)
+        grav = (G * self.snapshot.total_mass) / ((R ** 2 + z ** 2) ** (3/2))
+        density = rho(S, P)
+        result = density * R * (omega ** 2 - grav)
+        return result
 
+    def dPdz(self, P, S, R, z):
+        grav = (G * self.snapshot.total_mass) / ((R ** 2 + z ** 2) ** (3 / 2))
+        return rho(S, P) * z * (- grav)
+
+    def extrapolate_pressure(self, R_min, z_min):
+
+        i_R_limit = self.index_cylinder(R_min, 0)[1]
+        i_R_end = self.data['R'].shape[1]
+        i_z_min = self.index_cylinder(0, -z_min)[0]
+        i_z_max = self.index_cylinder(0, +z_min)[0]
+        i_z_end = self.data['R'].shape[0]
+
+        self.data['dR'] = np.roll(self.data['R'], -1, axis=1) - self.data['R']
+        self.data['dz'] = np.roll(self.data['z'], -1, axis=0) - self.data['z']
+
+        self.data['dP_R'] = np.zeros_like(self.data['R'])
+        self.data['dP_z'] = np.zeros_like(self.data['R'])
+
+        def propagate_R(j, i_min, i_max):
+            P, S = self.data['P'][i_min:i_max, j], self.data['s'][i_min:i_max, j]
+            R, z = self.data['R'][i_min:i_max, j], self.data['z'][i_min:i_max, j]
+            dR = self.data['dR'][i_min:i_max, j]
+            dPdR = self.dPdR(P, S, R, z)
+            dP_R = dPdR * dR
+
+            self.data['P'][i_min:i_max, j + 1] = self.data['P'][i_min:i_max, j] + dP_R
+
+        def propagate_z(i, j_min, j_max, reverse):
+            P, S = self.data['P'][i, j_min:j_max], self.data['s'][i, j_min:j_max]
+            R, z = self.data['R'][i, j_min:j_max], self.data['z'][i, j_min:j_max]
+            dz = self.data['dz'][i, j_min:j_max]
+            dPdz = self.dPdz(P, S, R, z)
+            dP_z = dPdz * dz * (-1 if reverse else +1)
+
+            self.data['P'][i + (-1 if reverse else +1), j_min:j_max] = self.data['P'][i, j_min:j_max] + dP_z
+
+        print('Extrapolating pressure...')
+
+        # extrapolate radially at |z| < z_min
+        print('Stage 1:')
+        for j in tqdm(range(i_R_limit, i_R_end-1)):
+            propagate_R(j, i_z_min, i_z_max)
+
+        # extrapolate vertically at R < R_min
+        print('Stage 2:')
+        for i in tqdm(range(i_z_max, i_z_end-1)):
+            propagate_z(i, 0, i_R_limit, False)
+        print('Stage 3:')
+        for i in tqdm(reversed(range(1, i_z_min))):
+            propagate_z(i, 0, i_R_limit, True)
+
+        # extrapolate radially at |z| > z_min
+        print('Stage 4:')
+        for j in tqdm(range(i_R_limit, i_R_end-1)):
+            propagate_R(j, 0, i_z_min)
+            propagate_R(j, i_z_max, i_z_end)
+
+        print('Pressure extrapolated')
 
 snapshot1 = snapshot('snapshots/basic_twin/snapshot_0411.hdf5')
-photosphere(snapshot1, 10 * Rearth, 500)
+# slice1 = gas_slice(snapshot1, size=12, rotate_vector=(1, 0, 0))
+# slice1.full_plot()
+photosphere(snapshot1, 12 * Rearth, 500)

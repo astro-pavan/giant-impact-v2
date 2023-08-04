@@ -62,6 +62,9 @@ class snapshot:
         self.total_mass.convert_to_units(M_earth)
         print(f'Total mass of particles {self.total_mass:.4e}')
 
+        self.total_angular_momentum = 0
+        self.total_specific_angular_momentum = 0
+
         # calculates the coordinates of the particles relative to the CoM
         pos = np.array(self.data.gas.coordinates - self.center_of_mass)
         self.R_xy = np.hypot(pos[:, 0], pos[:, 1]) * Rearth
@@ -144,9 +147,11 @@ class snapshot:
         gas.velocities.convert_to_mks()
         self.center_of_mass.convert_to_mks()
 
+        masses = gas.masses
         r, v = np.array(gas.coordinates - self.center_of_mass), np.array(gas.velocities)
 
-        h = np.cross(r, v)[:, 2] * ((m ** 2)/s)
+        # h = np.cross(r, v)[:, 2] * ((m ** 2)/s)
+        h = (r[:, 0] * v[:, 1] - r[:, 1] * v[:, 0])
         omega = h / (self.R_xy ** 2)
 
         v_r = np.sum(v * r, axis=1) / np.sqrt(np.sum(r * r, axis=1)) * (m/s)
@@ -158,9 +163,17 @@ class snapshot:
         gas.angular_velocity.cosmo_factor = gas.internal_energies.cosmo_factor
         gas.angular_velocity_mass_weighted = gas.angular_velocity * gas.masses
 
-        gas.angular_momentum = sw.objects.cosmo_array(h)
-        gas.angular_momentum.cosmo_factor = gas.internal_energies.cosmo_factor
-        gas.angular_momentum_mass_weighted = gas.angular_momentum * gas.masses
+        gas.specific_angular_momentum = sw.objects.cosmo_array(h)
+        gas.specific_angular_momentum.cosmo_factor = gas.internal_energies.cosmo_factor
+        gas.specific_angular_momentum_mass_weighted = gas.specific_angular_momentum * gas.masses
+
+        self.total_angular_momentum = np.sum(h * masses) * ((m ** 2)/s)
+        self.total_angular_momentum.convert_to_mks()
+        print(f'Total angular momentum of particles {self.total_angular_momentum:.4e}')
+
+        self.total_specific_angular_momentum = np.sum(h) * ((m ** 2)/s)
+        self.total_specific_angular_momentum.convert_to_mks()
+        print(f'Total specific angular momentum of particles {self.total_specific_angular_momentum:.4e}')
 
         gas.radial_velocity = sw.objects.cosmo_array(v_r)
         gas.radial_velocity.cosmo_factor = gas.internal_energies.cosmo_factor
@@ -448,3 +461,44 @@ def test():
     m.convert_to_mks()
     slice1 = gas_slice(snapshot1, size=5)
     slice1.plot('v_r', log=False)
+
+
+def AM_plot():
+
+    snapshot1 = snapshot('snapshots/basic_twin/snapshot_0411.hdf5')
+    print(snapshot1.total_angular_momentum)
+
+    snapshots = ['snapshots/low_mass_twin/snapshot_0274.hdf5',
+                 'snapshots/basic_twin/snapshot_0411.hdf5',
+                 'snapshots/high_mass_twin/snapshot_0360.hdf5',
+                 'snapshots/basic_spin/snapshot_0247.hdf5',
+                 'snapshots/advanced_spin/snapshot_0316.hdf5']
+    L = np.array([4.7e-4, 2e-3, 3e-3, 4.3e-4, 4.5e-4])
+    Q = [6759163.58216159, 9667334.53721656, 17032024.95369644, 9882334.67993462, 9044909.88212921]
+    AM = np.array([0.0, 0.0, 0.0, 0.0, 0.0])
+    SAM = np.array([0.0, 0.0, 0.0, 0.0, 0.0])
+
+    for i in range(len(snapshots)):
+        snapshot1 = snapshot(snapshots[i])
+        snapshot1.total_mass.convert_to_mks()
+        AM[i] = snapshot1.total_angular_momentum
+        SAM[i] = snapshot1.total_specific_angular_momentum
+
+    colours = ['red', 'orange', 'gold', 'green', 'blue']
+
+    plt.scatter(SAM, Q, c=colours, marker='x')
+    plt.xlabel('Specific angular momentum ($m^{2}s^{-1}$)')
+    plt.ylabel('Modified specific impact energy ($J/kg$)')
+    plt.show()
+
+    plt.scatter(SAM, L, c=colours, marker='x')
+    plt.xlabel('Specific angular momentum ($m^{2}s^{-1}$)')
+    plt.ylabel('Luminosity ($L_{\odot}$)')
+    plt.show()
+
+    plt.scatter(Q, L, c=colours, marker='x')
+    plt.xlabel('Modified specific impact energy ($J/kg$)')
+    plt.ylabel('Luminosity ($L_{\odot}$)')
+    plt.show()
+
+AM_plot()

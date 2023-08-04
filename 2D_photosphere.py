@@ -10,7 +10,7 @@ from unyt import cm, g, Rearth, J, K, kg, G
 from tqdm import tqdm
 
 from snapshot_analysis import snapshot, gas_slice
-from forsterite import rho
+from forsterite import rho, T, alpha
 
 class photosphere:
 
@@ -58,7 +58,7 @@ class photosphere:
             # loading slices of each property
             temperature_slice = get_slice('temperatures')
             pressure_slice, entropy_slice = get_slice('pressures'), get_slice('entropy')
-            angular_momentum_slice = get_slice('angular_momentum')
+            angular_momentum_slice = get_slice('specific_angular_momentum')
 
             mass_slice.convert_to_units(g / cm ** 3)
 
@@ -92,30 +92,44 @@ class photosphere:
             self.data[k] = self.data[k][:,int(resolution/2):]
 
         # extends the data array
-        extend = resolution
+        extend_R = int(resolution)
+        extend_z = int(resolution / 2)
         for k in self.data.keys():
             unit = self.data[k].units
-            self.data[k] = np.pad(self.data[k], ((0, 0), (0, extend)), 'mean' if k =='z' else 'constant') * unit
+            self.data[k] = np.pad(self.data[k], ((extend_z, extend_z), (0, extend_R)), 'constant') * unit
+            #self.data[k] = np.pad(self.data[k], ((extend_z, extend_z), (0, 0)), 'constant') * unit
 
         # calculating coordinates
         rows, cols = self.data['rho'].shape[0], self.data['rho'].shape[1]
+        self.z_height = int(rows/2)
         iX, iY = np.meshgrid(np.arange(cols), np.arange(rows))
         self.data['R'] = ((iX + 0.5) / pixels_per_Rearth) * Rearth
-        self.data['z'] = ((iY - resolution / 2 + 0.5) / pixels_per_Rearth) * Rearth
+        self.data['z'] = ((iY - self.z_height + 0.5) / pixels_per_Rearth) * Rearth
         self.data['r'] = np.sqrt(self.data['R'] ** 2 + self.data['z'] ** 2)
         self.data['theta'] = np.arctan2(self.data['R'], self.data['z'])
 
         print('Data loaded')
 
-        self.extrapolate_entropy(self.snapshot.HD_limit_R * 0.9, self.snapshot.HD_limit_z * 0.9)
-        self.plot('s')
+        self.extrapolate_entropy(self.snapshot.HD_limit_R * 0.8, self.snapshot.HD_limit_z * 0.8)
 
         self.extrapolate_pressure(self.snapshot.HD_limit_R, self.snapshot.HD_limit_z)
+
+        self.data['alpha'] = alpha(self.data['rho'], self.data['T'], self.data['P'], self.data['s'])
+        self.data['alpha_v'] = alpha(self.data['rho'], self.data['T'], self.data['P'], self.data['s'], D0=0)
+
         self.plot('P')
+        self.plot('s')
+        self.plot('rho')
+        self.plot('T')
+        self.plot('alpha')
+        self.plot('alpha_v')
+
 
     def plot(self, parameter):
-        z = np.where(np.sqrt(self.data['R'] ** 2 + self.data['z'] ** 2) < 2*Rearth, np.NaN, self.data[parameter].value)
-        plt.imshow(np.log10(z), cmap='jet')
+        central_mask = np.sqrt(self.data['R'] ** 2 + self.data['z'] ** 2) > 3*Rearth
+        z = self.data[parameter].value if parameter == 'T' or parameter == 's' else np.log10(self.data[parameter].value)
+        z = np.where(central_mask, z, np.NaN)
+        plt.imshow(z, cmap='jet')
         plt.show()
 
     # converts r and theta values into indexes compatible with the data array
@@ -128,7 +142,7 @@ class photosphere:
     # converts R and z values into indexes compatible with the data array
     def index_cylinder(self, R, z):
         i_R = np.int32(R / self.cell_size)
-        i_z = np.int32((z + self.size) / self.cell_size)
+        i_z = np.int32((z / self.cell_size) + self.z_height)
         return i_z, i_R
 
     # extrapolates entropy adiabatically with elliptic coords
@@ -213,11 +227,17 @@ class photosphere:
 
         # extrapolate radially at |z| > z_min
         print('Stage 4:')
-        for j in tqdm(range(i_R_limit, i_R_end-1)):
+        for j in tqdm(range(i_R_limit-1, i_R_end-1)):
             propagate_R(j, 0, i_z_min)
             propagate_R(j, i_z_max, i_z_end)
 
         print('Pressure extrapolated')
+
+        print('Calculating density and temperature:')
+        for i in tqdm(range(0, i_z_end)):
+            self.data['rho'][i, :] = rho(self.data['s'][i, :], self.data['P'][i, :])
+            self.data['T'][i, :] = T(self.data['s'][i, :], self.data['P'][i, :])
+
 
 snapshot1 = snapshot('snapshots/basic_twin/snapshot_0411.hdf5')
 # slice1 = gas_slice(snapshot1, size=12, rotate_vector=(1, 0, 0))

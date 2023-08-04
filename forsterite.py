@@ -1,5 +1,6 @@
 # Calculates the thermodynamic properties and opacity of forsterite using the ANEOS-2019 model and Kraus (2012)
 import numpy as np
+np.set_printoptions(precision=3)
 from scipy.interpolate import RegularGridInterpolator, interp1d
 from scipy.optimize import minimize
 import woma
@@ -83,6 +84,8 @@ def reverse_EOS_table(S, P):
 
 # blank interpolators for rho and T
 rho_interpolation, T_interpolation = lambda x: x, lambda x: x
+S_range = [4000, 12000]
+P_range = [1, 10]
 
 
 # generates the SP EOS table for interpolation
@@ -93,8 +96,8 @@ def generate_SP_table():
     print('Generating SP EOS table...')
 
     # produces table points to be calculated
-    S = np.linspace(4000, 11000, num=40)  # in J/K/kg
-    logP = np.linspace(2, 10, num=40)  # in log10(Pa)
+    S = np.linspace(S_range[0], S_range[1], num=50)  # in J/K/kg
+    logP = np.linspace(P_range[0], P_range[1], num=50)  # in log10(Pa)
     x, y = np.meshgrid(S, logP)
     rho_table = np.zeros_like(x)
     T_table = np.zeros_like(x)
@@ -118,8 +121,15 @@ generate_SP_table()
 def rho(S, P):
     S.convert_to_mks()
     P.convert_to_mks()
-    SP = np.array([S.value, np.log10(P.value)]).T
-    return rho_interpolation(SP) * g * cm ** -3
+
+    valid_region_mask = (S.value > S_range[0]) & (S.value < S_range[1]) &\
+                        (np.log10(P.value) > P_range[0]) & (np.log10(P.value) < P_range[1])
+
+    S = np.where(valid_region_mask, S, 5000) * J / K / kg
+    P = np.where(valid_region_mask, P, 1e7) * Pa
+    SP = np.array([S.value, np.log10(P.value)])
+
+    return np.where(valid_region_mask, rho_interpolation(SP.T), np.NaN) * g * cm ** -3
 
 
 # calculates T from S and P, takes numpy array inputs
@@ -127,8 +137,15 @@ def rho(S, P):
 def T(S, P):
     S.convert_to_mks()
     P.convert_to_mks()
-    SP = np.array([S.value, np.log10(P.value)]).T
-    return T_interpolation(SP) * K
+
+    valid_region_mask = (S.value > S_range[0]) & (S.value < S_range[1]) & \
+                        (np.log10(P.value) > P_range[0]) & (np.log10(P.value) < P_range[1])
+
+    S = np.where(valid_region_mask, S, 5000) * J / K / kg
+    P = np.where(valid_region_mask, P, 1e7) * Pa
+    SP = np.array([S.value, np.log10(P.value)])
+
+    return np.where(valid_region_mask, T_interpolation(SP.T), np.NaN) * K
 
 
 # defines the vapor dome - giving P as a function of S

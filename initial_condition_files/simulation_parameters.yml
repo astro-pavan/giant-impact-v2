@@ -34,7 +34,8 @@ Statistics:
 Restarts:
     enable: 1                           # Whether to enable dumping restarts at fixed intervals.
     onexit: 1
-    max_run_time: 0.1
+    max_run_time: 12.0
+    delta_hours: 2.0
     resubmit_on_exit:   1
     resubmit_command:   ./resub.sh                           # Whether to enable dumping restarts at fixed intervals.
 

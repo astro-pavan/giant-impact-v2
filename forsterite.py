@@ -1,10 +1,13 @@
 # Calculates the thermodynamic properties and opacity of forsterite using the ANEOS-2019 model and Kraus (2012)
+import matplotlib.pyplot as plt
 import numpy as np
+import unyt
+
 np.set_printoptions(precision=3)
-from scipy.interpolate import RegularGridInterpolator, interp1d
+from scipy.interpolate import RegularGridInterpolator, interp1d, interp2d
 from scipy.optimize import minimize
 import woma
-from unyt import g, cm, K, J, kg, Pa, m
+from unyt import g, cm, K, J, kg, Pa, m, s
 
 import sys
 import os
@@ -43,6 +46,8 @@ woma.load_eos_tables()
 NewEOS.P, NewEOS.S = NewEOS.P * 1e9, NewEOS.S * 1e6
 NewEOS.vc.Sl, NewEOS.vc.Sv = NewEOS.vc.Sl * 1e6, NewEOS.vc.Sv * 1e6
 NewEOS.vc.Pl, NewEOS.vc.Pv = NewEOS.vc.Pl * 1e9, NewEOS.vc.Pv * 1e9
+NewEOS.U = NewEOS.U * 1e6
+NewEOS.cs = NewEOS.cs / 100
 P_critical_point, S_critical_point = NewEOS.cp.P * 1e9, NewEOS.cp.S * 1e6
 
 print('EOS tables loaded')
@@ -50,7 +55,7 @@ print('EOS tables loaded')
 
 # calculates rho and T from S and P from the NewEOS table
 # does not use unyt
-def reverse_EOS_table(S, P):
+def reverse_EOS_table_SP(S, P):
     # calculates the log of the error between the target (S,P) and all the points in the EOS table
     log_error = np.log10(np.abs(NewEOS.S - S) / S + np.abs(NewEOS.P - P) / P)
 
@@ -83,17 +88,18 @@ def reverse_EOS_table(S, P):
 
 
 # blank interpolators for rho and T
-rho_interpolation, T_interpolation = lambda x: x, lambda x: x
-S_range = [4000, 12000]
-P_range = [1, 10]
+rho_interpolation, T_interpolation, T2_interpolation = lambda x: x, lambda x: x, lambda x: x
+S_range, P_range = [4000, 12000], [1, 10]
+
+
+u_interpolation = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.U.T, method='cubic', bounds_error=False, fill_value=np.NaN)
+cs_interpolation = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.cs.T, method='cubic')
 
 
 # generates the SP EOS table for interpolation
 # does not use unyt
 def generate_SP_table():
     global rho_interpolation, T_interpolation
-
-    print('Generating SP EOS table...')
 
     # produces table points to be calculated
     S = np.linspace(S_range[0], S_range[1], num=50)  # in J/K/kg
@@ -105,20 +111,36 @@ def generate_SP_table():
     # fills table values
     for i in range(x.shape[0]):
         for j in range(x.shape[1]):
-            rho_table[j, i], T_table[j, i] = reverse_EOS_table(x[i, j], 10 ** y[i, j])
+            rho_table[j, i], T_table[j, i] = reverse_EOS_table_SP(x[i, j], 10 ** y[i, j])
 
     rho_interpolation = RegularGridInterpolator((S, logP), rho_table, method='cubic')
     T_interpolation = RegularGridInterpolator((S, logP), T_table, method='cubic')
 
-    print('SP EOS table generated')
+
+def generate_u_rho_table():
+    global T2_interpolation
+
+    u = np.linspace(0, 5e7, num=50)
+    log_rho = np.linspace(-7, 2, num=50)
+    x, y = np.meshgrid(u, log_rho)
+    T_table = np.zeros_like(x)
+
+    for i in range(x.shape[0]):
+        for j in range(x.shape[1]):
+            T_table[j, i] = woma.T_u_rho(x[i, j], (10 ** y[i, j]) * 1e3, 400)
+
+    T2_interpolation = RegularGridInterpolator((u, log_rho), T_table, method='cubic')
 
 
+print('Generating EOS table...')
+#generate_u_rho_table()
 generate_SP_table()
+print('EOS table generated')
 
 
 # calculates rho from S and P, takes numpy array inputs
 # uses unyt
-def rho(S, P):
+def rho_EOS(S, P):
     S.convert_to_mks()
     P.convert_to_mks()
 
@@ -134,7 +156,7 @@ def rho(S, P):
 
 # calculates T from S and P, takes numpy array inputs
 # uses unyt
-def T(S, P):
+def T_EOS(S, P):
     S.convert_to_mks()
     P.convert_to_mks()
 
@@ -146,6 +168,31 @@ def T(S, P):
     SP = np.array([S.value, np.log10(P.value)])
 
     return np.where(valid_region_mask, T_interpolation(SP.T), np.NaN) * K
+
+
+def T2_EOS(u, rho):
+    rho.convert_to_units(g / cm ** 3)
+    u.convert_to_mks()
+
+    u_rho = np.array([u, rho])
+
+    return T2_interpolation(u_rho.T)
+
+
+# calculates u from rho and T, takes numpy array inputs
+# uses unyt
+def u_EOS(rho, T):
+    rho.convert_to_units(g / cm ** 3)
+    T.convert_to_units(K)
+    rhoT = np.array([rho.value, T.value])
+    return u_interpolation(rhoT.T) * (J / kg)
+
+
+def cs_EOS(rho, T):
+    rho.convert_to_units(g / cm ** 3)
+    T.convert_to_units(K)
+    rhoT = np.array([rho.value, T.value])
+    return cs_interpolation(rhoT.T) * (m / s)
 
 
 # defines the vapor dome - giving P as a function of S
@@ -259,6 +306,26 @@ def alpha(rho, T, P, S, D0=1e-3):
     return result * (m ** -1)
 
 
+def big_plot():
+
+    S = np.linspace(3000, 15000, num=60)
+    P = np.logspace(0, 10, num=60)
+    x, y = np.meshgrid(S, P)
+    x, y = x * J/K/kg, y * Pa
+
+    rho = rho_EOS(x, y)
+    T = T_EOS(x, y)
+
+    z = np.log10(alpha(rho, T, y, x, D0=0))
+
+    plt.contourf(x, y, z, 100, cmap='plasma')
+    plt.plot(NewEOS.vc.Sl, NewEOS.vc.Pl, 'k--')
+    plt.plot(NewEOS.vc.Sv, NewEOS.vc.Pv, 'k--')
+    plt.yscale('log')
+    plt.colorbar()
+    plt.show()
+
+
 def test():
     S_woma = lambda x: woma.s_rho_T(x[0] * 1e3, x[1], 400)
     P_woma = lambda x: woma.P_T_rho(x[1], x[0] * 1e3, 400)
@@ -268,8 +335,8 @@ def test():
         P = P_woma([rho_test, T_test]) * Pa
         print(S)
         print(P)
-        rho_check = rho(S, P)
-        T_check = T(S, P)
+        rho_check = rho_EOS(S, P)
+        T_check = T_EOS(S, P)
         assert (rho_check.value - rho_test) / rho_test < 0.1
         assert (T_check.value - T_test) / T_test < 0.1
 
@@ -278,5 +345,14 @@ def test():
     print(alpha(1e-5*g*cm**-3, 2900*K, 1e3*Pa, 9000*J/K/kg))
     print(alpha(1e-5*g*cm**-3, 2900*K, 1e3*Pa, 9000*J/K/kg, D0=0))
 
+    print(u_EOS(1e-3 * g / cm ** 3, 3000 * K))
+    print(woma.u_rho_T(1, 3000, 400))
 
-test()
+    print(u_EOS(1e-5 * g / cm ** 3, 2700 * K))
+    print(woma.u_rho_T(1e-2, 2700, 400))
+
+    S = np.array([[6000, 9000], [6000, 9000]]) * J / K / kg
+    P = np.array([[1e5, 1e3], [1e5, 1e3]]) * Pa
+
+    print(rho_EOS(S, P))
+

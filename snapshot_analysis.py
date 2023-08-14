@@ -5,6 +5,7 @@ from swiftsimio.visualisation.slice import slice_gas
 from swiftsimio.visualisation.rotation import rotation_matrix_from_vector
 import woma
 from unyt import Rearth, Pa, K, kg, J, m, s, g, cm
+from unyt.dimensions import length, time
 import unyt
 unyt.define_unit("M_earth", 5.9722e24 * unyt.kg)
 M_earth = unyt.M_earth
@@ -20,7 +21,7 @@ data_labels = {
     "rho": "Density ($g/cm^{3}$)",
     "T": "Temperature (K)",
     "P": "Pressure (Pa)",
-    "S": "Specific Entropy (J/K/kg)",
+    "s": "Specific Entropy (J/K/kg)",
     "omega": "Angular Velocity (rad/s)",
     "alpha": "Absorption ($m^{-1}$)",
     "phase": "Phase",
@@ -29,6 +30,13 @@ data_labels = {
     "c_s": "Sound Speed (m/s)",
     "u": "Specific Internal Energy (J/kg)",
     "rho_u": "Internal Energy Density ($J/m^{3}$)",
+    "matid": "Material ID",
+    "t_sound": "Sound crossing time (s)",
+    "t_cool": "Cooling time (s)",
+    "E": "Energy (J)",
+    "L": "Luminosity (W)",
+    "m": "Mass (kg)",
+    "dL": "Luminosity (W)"
 }
 
 colormaps = {
@@ -117,9 +125,13 @@ class snapshot:
 
         u, rho, mat_id = np.array(gas.internal_energies), np.array(gas.densities), np.array(gas.material_ids)
 
-        T = woma.eos.eos.A1_T_u_rho(u, rho, mat_id)
-        P = woma.eos.eos.A1_P_u_rho(u, rho, mat_id)
-        S = woma.eos.eos.A1_s_u_rho(u, rho, mat_id)
+        try:
+            T = woma.A1_T_u_rho(u, rho, mat_id)
+            P = woma.A1_P_u_rho(u, rho, mat_id)
+            S = woma.A1_s_u_rho(u, rho, mat_id)
+        except ValueError:
+            gas.material_ids_mass_weighted = gas.material_ids * gas.masses
+            return
 
         gas.temperatures = sw.objects.cosmo_array(T * K)
         gas.pressures = sw.objects.cosmo_array(P * Pa)
@@ -151,7 +163,7 @@ class snapshot:
         r, v = np.array(gas.coordinates - self.center_of_mass), np.array(gas.velocities)
 
         # h = np.cross(r, v)[:, 2] * ((m ** 2)/s)
-        h = (r[:, 0] * v[:, 1] - r[:, 1] * v[:, 0])
+        h = (r[:, 0] * v[:, 1] - r[:, 1] * v[:, 0]) * ((m ** 2)/s)
         omega = h / (self.R_xy ** 2)
 
         v_r = np.sum(v * r, axis=1) / np.sqrt(np.sum(r * r, axis=1)) * (m/s)
@@ -167,7 +179,7 @@ class snapshot:
         gas.specific_angular_momentum.cosmo_factor = gas.internal_energies.cosmo_factor
         gas.specific_angular_momentum_mass_weighted = gas.specific_angular_momentum * gas.masses
 
-        self.total_angular_momentum = np.sum(h * masses) * ((m ** 2)/s)
+        self.total_angular_momentum = np.sum(h * masses)
         self.total_angular_momentum.convert_to_mks()
         print(f'Total angular momentum of particles {self.total_angular_momentum:.4e}')
 
@@ -253,8 +265,12 @@ class snapshot:
 
         # rotation curve function (uses unyt)
         def best_fit(R):
-            R.convert_to_units(Rearth)
-            return (10 ** (two_lines(np.log10(R.value), a0, b0, c0))) * (s ** -1)
+            try:
+                R.convert_to_units(Rearth)
+                return (10 ** (two_lines(np.log10(R.value), a0, b0, c0))) * (s ** -1)
+            except AttributeError:
+                return (10 ** (two_lines(np.log10(R), a0, b0, c0))) * (s ** -1)
+
         CoRoL = b0 * Rearth
 
         omega_keplerian = lambda R: np.sqrt((6.674e-11 * (self.total_mass.value / 5.9722e24)) / ((R * 6371000) ** 3))
@@ -349,13 +365,17 @@ class gas_slice:
 
             return mass_weighted_slice / self.data['rho']
 
-        self.data['T'] = get_slice("temperatures")
-        self.data['P'] = get_slice("pressures")
-        self.data['S'] = get_slice("entropy")
-        self.data['omega'] = get_slice("angular_velocity")
-        self.data['v_r'] = get_slice("radial_velocity")
-        self.data['u'] = get_slice("internal_energies")
-        self.data['matid'] = get_slice("material_ids") - 400
+        self.data['matid'] = get_slice("material_ids") / 400
+
+        try:
+            self.data['T'] = get_slice("temperatures")
+            self.data['P'] = get_slice("pressures")
+            self.data['S'] = get_slice("entropy")
+            self.data['omega'] = get_slice("angular_velocity")
+            self.data['v_r'] = get_slice("radial_velocity")
+            self.data['u'] = get_slice("internal_energies")
+        except AttributeError:
+            pass
 
         self.data['rho'].convert_to_units(g / cm ** 3)
 
@@ -442,7 +462,7 @@ class gas_slice:
         plot_single(ax[0, 0], 'rho')
         plot_single(ax[1, 0], 'T')
         plot_single(ax[0, 1], 'P')
-        plot_single(ax[1, 1], 'S')
+        plot_single(ax[1, 1], 's')
 
         if save is not None:
             plt.savefig(save)
@@ -500,5 +520,3 @@ def AM_plot():
     plt.xlabel('Modified specific impact energy ($J/kg$)')
     plt.ylabel('Luminosity ($L_{\odot}$)')
     plt.show()
-
-AM_plot()

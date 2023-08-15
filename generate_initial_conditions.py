@@ -208,6 +208,15 @@ def create_slurm_script(name):
     with open(f'{working_directory}{name}/impact_slurm.sh', 'w') as file:
         file.writelines(data)
 
+    with open('initial_condition_files/slurm_restart.sh', 'r') as file:
+        data = file.readlines()
+
+    data[2] = f'#SBATCH -J {name}_restart\n'
+
+    with open(f'{working_directory}{name}/impact_slurm.sh', 'w') as file:
+        file.writelines(data)
+
+
 
 def create_preset_conditions():
 

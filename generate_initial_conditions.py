@@ -21,6 +21,7 @@ def generate_initial_conditions(particle_count, target_mass, mass_ratio, impact_
     create_sim_directory(name)
     create_parameter_file(name, sim_time=144000, snapshot_frequency=600)
     create_slurm_script(name)
+    create_restart(name)
 
     total_mass = target_mass * (1 + mass_ratio)
     impactor_mass = target_mass * mass_ratio
@@ -203,18 +204,28 @@ def create_slurm_script(name):
     with open('initial_condition_files/slurm_template.sh', 'r') as file:
         data = file.readlines()
 
+    file.close()
+
     data[2] = f'#SBATCH -J {name}\n'
 
     with open(f'{working_directory}{name}/impact_slurm.sh', 'w') as file:
         file.writelines(data)
 
+    file.close()
+
+
+def create_restart(name):
     with open('initial_condition_files/slurm_restart.sh', 'r') as file:
         data = file.readlines()
 
+    file.close()
+
     data[2] = f'#SBATCH -J {name}_restart\n'
 
-    with open(f'{working_directory}{name}/impact_slurm.sh', 'w') as file:
+    with open(f'{working_directory}{name}/slurm_restart.sh', 'w') as file:
         file.writelines(data)
+
+    file.close()
 
 
 

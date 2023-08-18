@@ -12,7 +12,7 @@ from unyt import cm, g, Rearth, J, K, kg, G, m, stefan_boltzmann_constant, W, di
 from tqdm import tqdm
 
 from snapshot_analysis import snapshot, gas_slice, data_labels
-from forsterite import rho_EOS, T_EOS, alpha, cs_EOS, u_EOS
+from forsterite import *
 import forsterite
 
 sigma = 5.670374419e-8
@@ -491,6 +491,8 @@ class photosphere_sph:
         self.entropy_extrapolation = self.extrapolate_entropy()
         self.extrapolate_pressure_v2()
 
+        self.data['omega'] = self.data['h'] * (self.data['R'] ** -2)
+
         # set up values for cooling calc
         self.data['dr'] = np.roll(self.data['r'], -1, axis=1) - self.data['r']
         self.data['dr'][:, -1] = self.data['dr'][:, -2]
@@ -525,7 +527,7 @@ class photosphere_sph:
         self.data['tau'] = self.data['dr'] * self.data['alpha']
         self.data['tau_v'] = self.data['dr'] * self.data['alpha_v']
 
-        self.plot('puff', log=True, contours=[0])
+        self.data['tau_v_2'] = self.data['r'] * self.data['d_theta'] * self.data['alpha_v']
 
         #self.plot('A_factor', log=True, contours=[-1, -0.5, -0.1, 0])
 
@@ -538,8 +540,8 @@ class photosphere_sph:
         plt.contourf(R, z, vals, 200, cmap='jet')
         cbar = plt.colorbar(label=parameter)
 
-        theta = np.linspace(0, np.pi)
-        plt.plot(5 * np.sin(theta), 5 * np.cos(theta), 'w--')
+        # theta = np.linspace(0, np.pi)
+        # plt.plot(5 * np.sin(theta), 5 * np.cos(theta), 'w--')
 
         if contours is not None:
             cs = plt.contour(R, z, vals, contours, colors='black', linestyles='dashed')
@@ -579,16 +581,19 @@ class photosphere_sph:
         extrapolation_mask = ((self.data['R'] / self.R_min) ** 2 + (self.data['z'] / self.z_min) ** 2 > 1)
         self.data['s'] = np.where(extrapolation_mask, entropy_extrapolation(A2_v), self.data['s'])
 
-        return entropy_extrapolation
+        def funct(r, theta):
+            v = get_v(r * np.sin(theta), r * np.cos(theta), self.linear_eccentricity)
+            return entropy_extrapolation(v)
 
-    def dPdr(self, P, r, theta):
+        return funct
+
+    def dPdr(self, P, r, theta, S_funct=None):
         gravity = - (6.674e-11 * self.central_mass) / (r ** 2)
 
         R = r * np.sin(theta)
         centrifugal = R * (self.snapshot.best_fit_rotation_curve_mks(R) ** 2) * np.sin(theta)
 
-        v = get_v(R, r * np.cos(theta), self.linear_eccentricity)
-        S = self.entropy_extrapolation(v)
+        S = self.entropy_extrapolation(r, theta)
 
         rho = rho_EOS(S, P, MKS=True)
 
@@ -664,8 +669,23 @@ class photosphere_sph:
         plt.imshow(np.sign(dE), cmap='jet')
         plt.show()
 
+    def remove_droplets(self):
+
+        condensation_mask = phase(self.data['s'], self.data['P']) == 2
+        new_S = np.where(condensation_mask, PS_vapor_dome_v(self.data['P']), self.data['s'])
+
+        rho_drop = rho_liquid_vc(self.data['P'])
+        rho_gas = rho_vapor_vc(self.data['rho'], self.data['P'], self.data['s'])
+        t_infall = (2 * rho_drop * 1e-3) / (rho_gas * 0.5 * self.data['R'] * self.data['omega'])
+
+        self.data['s'] = new_S
+
+    def hydrostatic_equilibrium(self):
+
+        rho_interpolation
+
 snapshot1 = snapshot('snapshots/basic_twin/snapshot_0411.hdf5')
 p2 = photosphere_sph(snapshot1, 12 * Rearth, 25 * Rearth, 100, n_theta=20)
-p2.cool(10)
-#p2.plot('tau', log=True, contours=[-2, 0, 0.5])
-p2.plot('tau_v', log=True, contours=[-2, 0, 0.5])
+p2.remove_droplets()
+
+

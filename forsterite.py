@@ -140,34 +140,59 @@ print('EOS table generated')
 
 # calculates rho from S and P, takes numpy array inputs
 # uses unyt
-def rho_EOS(S, P):
-    S.convert_to_mks()
-    P.convert_to_mks()
+def rho_EOS(S, P, MKS=False):
 
-    valid_region_mask = (S.value > S_range[0]) & (S.value < S_range[1]) &\
-                        (np.log10(P.value) > P_range[0]) & (np.log10(P.value) < P_range[1])
+    if MKS == False:
+        S.convert_to_mks()
+        P.convert_to_mks()
+        S, P = S.value, P.value
 
-    S = np.where(valid_region_mask, S, 5000) * J / K / kg
-    P = np.where(valid_region_mask, P, 1e7) * Pa
-    SP = np.array([S.value, np.log10(P.value)])
+    valid_region_mask = (S > S_range[0]) & (S < S_range[1]) & (np.log10(P) > P_range[0]) & (np.log10(P) < P_range[1])
 
-    return np.where(valid_region_mask, rho_interpolation(SP.T), np.NaN) * g * cm ** -3
+    S = np.where(valid_region_mask, S, 5000)
+    P = np.where(valid_region_mask, P, 1e7)
+    SP = np.array([S, np.log10(P)])
+
+    if len(S.shape) == 2:
+        SP = np.transpose(SP, axes=(1,2,0))
+    else:
+        SP = SP.T
+
+    result = np.where(valid_region_mask, rho_interpolation(SP), np.NaN) * g * cm ** -3
+    if MKS:
+        result.convert_to_mks()
+        return result.value
+    else:
+        result
 
 
 # calculates T from S and P, takes numpy array inputs
 # uses unyt
-def T_EOS(S, P):
-    S.convert_to_mks()
-    P.convert_to_mks()
+def T_EOS(S, P, MKS=False):
 
-    valid_region_mask = (S.value > S_range[0]) & (S.value < S_range[1]) & \
-                        (np.log10(P.value) > P_range[0]) & (np.log10(P.value) < P_range[1])
+    if MKS == False:
+        S.convert_to_mks()
+        P.convert_to_mks()
+        S, P = S.value, P.value
 
-    S = np.where(valid_region_mask, S, 5000) * J / K / kg
-    P = np.where(valid_region_mask, P, 1e7) * Pa
-    SP = np.array([S.value, np.log10(P.value)])
+    valid_region_mask = (S > S_range[0]) & (S < S_range[1]) & \
+                        (np.log10(P) > P_range[0]) & (np.log10(P) < P_range[1])
 
-    return np.where(valid_region_mask, T_interpolation(SP.T), np.NaN) * K
+    S = np.where(valid_region_mask, S, 5000)
+    P = np.where(valid_region_mask, P, 1e7)
+    SP = np.array([S, np.log10(P)])
+
+    if len(S.shape) == 2:
+        SP = np.transpose(SP, axes=(1,2,0))
+    else:
+        SP = SP.T
+
+    result = np.where(valid_region_mask, T_interpolation(SP), np.NaN) * K
+    if MKS:
+        result.convert_to_mks()
+        return result.value
+    else:
+        result
 
 
 def T2_EOS(u, rho):
@@ -303,7 +328,7 @@ def alpha(rho, T, P, S, D0=1e-3):
         result = np.where(phase == 2, alpha_v(rho, T), result)
     result = np.where(phase == 3, alpha_v(rho, T), result)
 
-    return result * (m ** -1)
+    return result
 
 
 def big_plot():

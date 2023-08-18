@@ -92,8 +92,10 @@ rho_interpolation, T_interpolation, T2_interpolation = lambda x: x, lambda x: x,
 S_range, P_range = [4000, 12000], [1, 10]
 
 
-u_interpolation = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.U.T, method='cubic', bounds_error=False, fill_value=np.NaN)
-cs_interpolation = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.cs.T, method='cubic')
+u_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.U.T, method='cubic', bounds_error=False, fill_value=np.NaN)
+P_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.P.T, method='cubic', bounds_error=False, fill_value=np.NaN)
+S_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.S.T, method='cubic', bounds_error=False, fill_value=np.NaN)
+cs_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.cs.T, method='cubic')
 
 
 # generates the SP EOS table for interpolation
@@ -196,28 +198,59 @@ def T_EOS(S, P, MKS=False):
 
 
 def T2_EOS(u, rho):
-    rho.convert_to_units(g / cm ** 3)
-    u.convert_to_mks()
 
     u_rho = np.array([u, rho])
 
+    if len(u.shape) == 2:
+        u_rho = np.transpose(u_rho, axes=(1, 2, 0))
+    else:
+        u_rho = u_rho.T
+
     return T2_interpolation(u_rho.T)
+
+
+def P_EOS(rho, T):
+
+    rhoT = np.array([rho, T])
+
+    if len(rho.shape) == 2:
+        rhoT = np.transpose(rhoT, axes=(1,2,0))
+    else:
+        rhoT = rhoT.T
+
+    return P_interp(rhoT)
+
+
+def S_EOS(rho, T):
+
+    rhoT = np.array([rho, T])
+
+    if len(rho.shape) == 2:
+        rhoT = np.transpose(rhoT, axes=(1, 2, 0))
+    else:
+        rhoT = rhoT.T
+
+    return S_interp(rhoT)
 
 
 # calculates u from rho and T, takes numpy array inputs
 # uses unyt
 def u_EOS(rho, T):
-    rho.convert_to_units(g / cm ** 3)
-    T.convert_to_units(K)
-    rhoT = np.array([rho.value, T.value])
-    return u_interpolation(rhoT.T) * (J / kg)
+    rhoT = np.array([rho, T])
+
+    if len(rho.shape) == 2:
+        rhoT = np.transpose(rhoT, axes=(1, 2, 0))
+    else:
+        rhoT = rhoT.T
+
+    return S_interp(rhoT)
 
 
 def cs_EOS(rho, T):
     rho.convert_to_units(g / cm ** 3)
     T.convert_to_units(K)
     rhoT = np.array([rho.value, T.value])
-    return cs_interpolation(rhoT.T) * (m / s)
+    return cs_interp(rhoT.T) * (m / s)
 
 
 # defines the vapor dome - giving P as a function of S
@@ -232,8 +265,8 @@ S_P_vapor_dome = interp1d(S_vapor_dome, P_vapor_dome)
 # 2 : liquid vapor mix
 # 3 : vapor
 def phase(S, P):
-    P.convert_to_units(Pa)
-    S.convert_to_units(J / K / kg)
+    # P.convert_to_units(Pa)
+    # S.convert_to_units(J / K / kg)
 
     min_P = 1e-5  # pressures below this are invalid
 
@@ -258,7 +291,7 @@ def alpha_v(rho, T):
 
 
 # gives the vapor dome - giving S as a function of P for the liquid and vapor parts
-PS_vapor_dome_l, PS_vapor_dome_v = interp1d(NewEOS.vc.Pl, NewEOS.vc.Sl), interp1d(NewEOS.vc.Pv, NewEOS.vc.Sv)
+PS_vapor_dome_l, PS_vapor_dome_v = interp1d(NewEOS.vc.Pl, NewEOS.vc.Sl), interp1d(NewEOS.vc.Pv, NewEOS.vc.Sv, bounds_error=False)
 
 
 # wrapper function for the above function - can deal with values outside the range of the curve
@@ -283,7 +316,21 @@ P_rho_vapor_curve_l = interp1d(NewEOS.vc.Pl, NewEOS.vc.rl)
 def rho_liquid_vc(P):
     return np.piecewise(P,
                         [P < 1.7e-6, np.logical_and(P > 1.7e-6, P < NewEOS.vc.Pl[0]), P > NewEOS.vc.Pl[0]],
-                        [3.11, P_rho_vapor_curve_l, 0.57])
+                        [3.11, P_rho_vapor_curve_l, 0.57]) * 1000
+
+
+def rho_vapor_vc(rho, P, S):
+
+    Sl = vapor_curve_S(P, phase='l')
+    Sv = vapor_curve_S(P, phase='v')
+
+    vq = np.where(P < P_critical_point, (S - Sl) / (Sv - Sl), 0)
+
+    rho_l = rho_liquid_vc(P)
+
+    rho_v = 1 / (((1/rho) + (1/rho_l))*((1/vq) - 1) + 1)
+
+    return rho_v * 1000
 
 
 # calculates the absorption of the liquid vapor mix
@@ -381,3 +428,16 @@ def test():
 
     print(rho_EOS(S, P))
 
+
+u_start = u_EOS(np.array([1e-3]), np.array([4000]))
+u = np.linspace(0, u_start)
+rho = np.full_like(u, 1e-3)
+T = T2_EOS(u, rho)
+S = S_EOS(rho, T)
+P = P_EOS(rho, T)
+plt.plot(S, P)
+plt.plot(NewEOS.vc.Sl, NewEOS.vc.Pl, 'k--')
+plt.plot(NewEOS.vc.Sv, NewEOS.vc.Pv, 'k--')
+plt.yscale('log')
+plt.show()
+print(u_start)

@@ -15,10 +15,30 @@ from snapshot_analysis import snapshot, gas_slice, data_labels
 from forsterite import rho_EOS, T_EOS, alpha, cs_EOS, u_EOS
 import forsterite
 
+sigma = 5.670374419e-8
+
 
 def get_v(R, z, a):
     v = np.sign(z) * np.arccos((np.sqrt((R + a) ** 2 + z ** 2) - np.sqrt((R - a) ** 2 + z ** 2)) / (2 * a))
     return np.nan_to_num(v)
+
+
+def shift_right(arr):
+    result = np.roll(arr, +1, axis=1)
+    result[:, 0] = np.zeros_like(result[:, 0])
+    return result
+
+
+def shift_up(arr):
+    result = np.roll(arr, -1, axis=0)
+    result[-1, :] = np.zeros_like(result[-1, :])
+    return result
+
+
+def shift_down(arr):
+    result = np.roll(arr, +1, axis=0)
+    result[0, :] = np.zeros_like(result[0, :])
+    return result
 
 
 class photosphere_cyl:
@@ -123,9 +143,9 @@ class photosphere_cyl:
 
         print('Data loaded')
 
-        self.extrapolate_entropy(self.snapshot.HD_limit_R * 0.85, self.snapshot.HD_limit_z * 0.85)
+        self.extrapolate_entropy(self.snapshot.HD_limit_R * 0.9, self.snapshot.HD_limit_z * 0.9)
 
-        self.extrapolate_pressure(self.snapshot.HD_limit_R * 0.85, self.snapshot.HD_limit_z * 0.85)
+        self.extrapolate_pressure(self.snapshot.HD_limit_R * 0.9, self.snapshot.HD_limit_z * 0.9)
 
         self.data['alpha'] = alpha(self.data['rho'], self.data['T'], self.data['P'], self.data['s'])
         self.data['alpha_v'] = alpha(self.data['rho'], self.data['T'], self.data['P'], self.data['s'], D0=0)
@@ -149,43 +169,29 @@ class photosphere_cyl:
         self.data['t_cool'] = self.data['E'] / self.data['dL']
         self.data['t_cool'].convert_to_units(unyt.s)
 
-        self.plot('m')
-        self.plot('E')
-        self.plot('L')
-        self.plot('dL')
-        self.plot('t_cool')
-        self.plot('t_sound')
-
-        self.plot('P')
-        self.plot('s')
-        # self.plot('rho')
-        # self.plot('T')
-        self.plot('alpha')
-        #self.plot('alpha_v')
-
-        colours = ['red', 'orange', 'gold', 'green', 'blue', 'purple']
-        z = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        theta = [np.pi * 0.5, np.pi * 0.4, np.pi * 0.3, np.pi * 0.2, np.pi * 0.1, 0]
-
+        # colours = ['red', 'orange', 'gold', 'green', 'blue', 'purple']
+        # z = [0, 0.2, 0.4, 0.6, 0.8, 1]
+        # theta = [np.pi * 0.5, np.pi * 0.4, np.pi * 0.3, np.pi * 0.2, np.pi * 0.1, 0]
+        #
+        # # for i in range(6):
+        # #     i_z, i_R = self.index_cylinder(1*Rearth, z[i]*Rearth)
+        # #     plt.plot(self.data['s'][i_z, i_R:].value, self.data['P'][i_z, i_R:].value, label=f'z={z[i]}', c=colours[i])
+        #
         # for i in range(6):
-        #     i_z, i_R = self.index_cylinder(1*Rearth, z[i]*Rearth)
-        #     plt.plot(self.data['s'][i_z, i_R:].value, self.data['P'][i_z, i_R:].value, label=f'z={z[i]}', c=colours[i])
-
-        for i in range(6):
-            indexes = self.index_polar(np.linspace(1, 15) * Rearth, theta[i])
-            s = self.data['s'][tuple(indexes)].value
-            p = self.data['P'][tuple(indexes)].value
-            plt.plot(s, p, label=f'theta={theta[i]}', c=colours[i])
-
-        plt.plot(forsterite.NewEOS.vc.Sl, forsterite.NewEOS.vc.Pl, 'k--')
-        plt.plot(forsterite.NewEOS.vc.Sv, forsterite.NewEOS.vc.Pv, 'k--')
-        plt.xlim(5000, 11000)
-        plt.ylim(1e2, 1e10)
-        plt.xlabel(data_labels['s'])
-        plt.ylabel(data_labels['P'])
-        plt.yscale('log')
-        plt.legend()
-        plt.show()
+        #     indexes = self.index_polar(np.linspace(1, 15) * Rearth, theta[i])
+        #     s = self.data['s'][tuple(indexes)].value
+        #     p = self.data['P'][tuple(indexes)].value
+        #     plt.plot(s, p, label=f'theta={theta[i]}', c=colours[i])
+        #
+        # plt.plot(forsterite.NewEOS.vc.Sl, forsterite.NewEOS.vc.Pl, 'k--')
+        # plt.plot(forsterite.NewEOS.vc.Sv, forsterite.NewEOS.vc.Pv, 'k--')
+        # plt.xlim(5000, 11000)
+        # plt.ylim(1e2, 1e10)
+        # plt.xlabel(data_labels['s'])
+        # plt.ylabel(data_labels['P'])
+        # plt.yscale('log')
+        # plt.legend()
+        # plt.show()
 
     def plot(self, parameter):
         central_mask = np.sqrt(self.data['R'] ** 2 + self.data['z'] ** 2) > 3*Rearth
@@ -260,11 +266,11 @@ class photosphere_cyl:
 
             omega = self.snapshot.best_fit_rotation_curve(R)
             grav = (G * self.snapshot.total_mass) / ((R ** 2 + z ** 2) ** (3 / 2))
-            density, temp = rho_EOS(S, P), T_EOS(S, P)
+            density, temp = rho_EOS(S.value, P.value, MKS=True) * kg * (m ** -3), T_EOS(S, P)
 
             self.data['rho'][i_min:i_max, j] = density
             self.data['T'][i_min:i_max, j] = temp
-            self.data['c_s'][i_min:i_max, j] = cs_EOS(density, temp)
+            #self.data['c_s'][i_min:i_max, j] = cs_EOS(density, temp)
             #self.data['u'][i_min:i_max, j] = u_EOS(density, temp)
 
             dR = self.data['dR'][i_min:i_max, j]
@@ -285,7 +291,7 @@ class photosphere_cyl:
 
             self.data['rho'][i, j_min:j_max] = density
             self.data['T'][i, j_min:j_max] = temp
-            self.data['c_s'][i, j_min:j_max] = cs_EOS(density, temp)
+            #self.data['c_s'][i, j_min:j_max] = cs_EOS(density, temp)
             #self.data['u'][i, j_min:j_max] = u_EOS(density, temp)
 
             dz = self.data['dz'][i, j_min:j_max]
@@ -375,22 +381,23 @@ units = {
 
 class photosphere_sph:
 
-    def __init__(self, snapshot, sample_size, max_size, resolution):
+    # sample size and max size both have units
+    def __init__(self, snapshot, sample_size, max_size, resolution, n_theta=100, n_phi=10):
 
         sample_size.convert_to_units(Rearth)
         self.snapshot = snapshot
-
         self.data = {}
-        n_theta, n_phi = 400, 10
 
-        r, theta = np.meshgrid(np.linspace(0, sample_size.value * 0.95, num=int(resolution / 2)),
+        # calculates the indexes to sample from to fill the array
+        r, theta = np.meshgrid(np.linspace(0, sample_size.value * 0.95, num=int(resolution / 2)) * Rearth,
                                np.arange(n_theta + 1) * (np.pi / n_theta))
         pixel_size = sample_size.value / (resolution / 2)
-
-        i_R = np.int32((r * np.sin(theta) / pixel_size) + (resolution / 2))
-        i_z = np.int32((r * np.cos(theta) / pixel_size) + (resolution / 2))
+        i_R = np.int32((r.value * np.sin(theta) / pixel_size) + (resolution / 2))
+        i_z = np.int32((r.value * np.cos(theta) / pixel_size) + (resolution / 2))
         indexes = i_z, i_R
+        extend_r = int((max_size.value - sample_size.value) / pixel_size)
 
+        # loads a cross-section of the simulation at an angle phi
         def get_section(phi):
             data = {}
 
@@ -426,15 +433,23 @@ class photosphere_sph:
                 return property_slice[tuple(indexes)]
 
             # loading slices of each property
-            data['T'] = get_slice('temperatures')
-            data['P'], data['s'] = get_slice('pressures'), get_slice('entropy')
-            data['h'] = get_slice('specific_angular_momentum')
+            temperatures = get_slice('temperatures')
+            pressures, entropies = get_slice('pressures'), get_slice('entropy')
+            angular_momenta = get_slice('specific_angular_momentum')
 
-            mass_slice.convert_to_units(g / cm ** 3)
+            # convert data to MKS
+            mass_slice.convert_to_mks()
+            temperatures.convert_to_mks()
+            pressures.convert_to_mks()
+            entropies.convert_to_mks()
+            angular_momenta.convert_to_mks()
+            r.convert_to_mks()
 
-            data['rho'] = mass_slice[tuple(indexes)]
-
-            data['r'], data['theta'] = r * Rearth, theta
+            # put data in dictionary
+            data['r'], data['theta'] = r, theta
+            data['rho'], data['T'] = mass_slice[tuple(indexes)].value, temperatures
+            data['P'], data['s'] = pressures, entropies
+            data['h'] = angular_momenta
 
             return data
 
@@ -448,32 +463,93 @@ class photosphere_sph:
             for k in self.data.keys():
                 self.data[k] = (i * self.data[k] + vals[k]) / (i + 1)
 
-        extend_r = int((max_size.value - sample_size.value) / pixel_size)
+        max_size.convert_to_mks()
 
+        # extends the data arrays ready for extrapolation
         for k in self.data.keys():
-            unit = 1 if k == 'theta' else self.data[k].units
             if k == 'r':
-                self.data[k] = np.pad(self.data[k], ((0, 0), (0, extend_r)), 'linear_ramp', end_values=(0, max_size.value)) * unit
+                self.data[k] = np.pad(self.data[k], ((0, 0), (0, extend_r)), 'linear_ramp', end_values=(0, max_size.value))
             elif k == 'theta':
-                self.data[k] = np.pad(self.data[k], ((0, 0), (0, extend_r)), 'edge') * unit
+                self.data[k] = np.pad(self.data[k], ((0, 0), (0, extend_r)), 'edge')
             else:
-                self.data[k] = np.pad(self.data[k], ((0, 0), (0, extend_r)), 'constant') * unit
+                self.data[k] = np.pad(self.data[k], ((0, 0), (0, extend_r)), 'constant')
 
+        # calculates the R and z coordinates for each point
         self.data['R'] = self.data['r'] * np.sin(self.data['theta'])
         self.data['z'] = self.data['r'] * np.cos(self.data['theta'])
 
+        # these values are used to calculate the index in the array for a given r and theta
         self.i_per_theta = n_theta / np.pi
-        self.i_per_r = self.data['r'].shape[0] / max_size
-        self.R_min, self.z_min = snapshot.HD_limit_R * 0.95, snapshot.HD_limit_z * 0.95
-        self.linear_eccentricity = np.sqrt(self.R_min ** 2 - self.z_min ** 2)
-        self.central_mass = self.snapshot.total_mass
+        self.i_per_r = self.data['r'].shape[1] / max_size.value
+
+        # values used to get the elliptical surface for the start of the extrapolation
+        self.R_min, self.z_min = snapshot.HD_limit_R.value * 0.95, snapshot.HD_limit_z.value * 0.95
+        self.linear_eccentricity = np.sqrt(self.R_min ** 2 - self.z_min ** 2) # linear eccentricity of the extrapolation surface
+
+        self.central_mass = self.snapshot.total_mass.value
 
         self.entropy_extrapolation = self.extrapolate_entropy()
+        self.extrapolate_pressure_v2()
 
-    def plot(self, parameter, log):
-        z = self.data[parameter].value
-        plt.contourf(self.data['R'].value, self.data['z'].value, np.log10(z) if log else z, 80, cmap='jet')
-        plt.colorbar(label=f'log[{data_labels[parameter]}]')
+        # set up values for cooling calc
+        self.data['dr'] = np.roll(self.data['r'], -1, axis=1) - self.data['r']
+        self.data['dr'][:, -1] = self.data['dr'][:, -2]
+        self.data['d_theta'] = np.full_like(self.data['dr'], np.pi / n_theta)
+
+        self.data['A_r-'] = 2 * np.pi * (self.data['r']) ** 2 * \
+                            (np.cos(self.data['theta']) - np.cos(self.data['theta'] + self.data['d_theta']))
+        self.data['A_r+'] = 2 * np.pi * (self.data['r'] + self.data['dr']) ** 2 * \
+                            (np.cos(self.data['theta']) - np.cos(self.data['theta'] + self.data['d_theta']))
+        self.data['A_theta-'] = np.pi * ((self.data['r'] + self.data['dr']) ** 2 -
+                                         (self.data['r']) ** 2) * np.sin(self.data['theta'])
+        self.data['A_theta+'] = np.pi * ((self.data['r'] + self.data['dr']) ** 2 -
+                                         (self.data['r']) ** 2) * np.sin(self.data['theta'] + self.data['d_theta'])
+        self.data['A_theta+'][-1, :] = np.zeros_like(self.data['A_theta+'][-1, :])
+
+
+        self.data['V'] = np.pi * ((self.data['r'] + self.data['dr']) ** 2 - (self.data['r']) ** 2) *\
+                         (np.cos(self.data['theta']) - np.cos(self.data['theta'] + self.data['d_theta']))
+
+        self.data['L_r+'] = np.zeros_like(self.data['r'])
+        self.data['L_theta-'] = np.zeros_like(self.data['r'])
+        self.data['L_theta+'] = np.zeros_like(self.data['r'])
+
+        # self.data['m'] = self.data['rho'] + self.data['V']
+        # self.data['E'] = self.data['u'] * self.data['m']
+
+        self.data['cross_section'] = np.minimum(self.data['alpha_v'] * self.data['V'], self.data['A_r+'])
+        self.data['A_factor'] = self.data['cross_section'] / self.data['A_r+']
+
+        self.data['puff'] = (((5 * 6371000)/ self.data['r']) ** 2) * ((5000/self.data['T']) ** 4)
+
+        self.data['tau'] = self.data['dr'] * self.data['alpha']
+        self.data['tau_v'] = self.data['dr'] * self.data['alpha_v']
+
+        self.plot('puff', log=True, contours=[0])
+
+        #self.plot('A_factor', log=True, contours=[-1, -0.5, -0.1, 0])
+
+    def plot(self, parameter, log=True, contours=None):
+        vals = np.log10(self.data[parameter]) if log else self.data[parameter]
+        R, z = self.data['R'] * m, self.data['z'] * m
+        R.convert_to_units(Rearth)
+        z.convert_to_units(Rearth)
+
+        plt.contourf(R, z, vals, 200, cmap='jet')
+        cbar = plt.colorbar(label=parameter)
+
+        theta = np.linspace(0, np.pi)
+        plt.plot(5 * np.sin(theta), 5 * np.cos(theta), 'w--')
+
+        if contours is not None:
+            cs = plt.contour(R, z, vals, contours, colors='black', linestyles='dashed')
+            plt.clabel(cs, contours, colors='black')
+
+        # vals = np.nan_to_num(vals, posinf=0)
+        #
+        # if log:
+        #     ticks = np.arange(int(np.nanmin(vals)), int(np.nanmax(vals)))
+        #     cbar.set_ticks(ticks)
         plt.show()
 
     def get_index(self, r, theta):
@@ -501,18 +577,27 @@ class photosphere_sph:
         A2_v = get_v(x, y, a)
 
         extrapolation_mask = ((self.data['R'] / self.R_min) ** 2 + (self.data['z'] / self.z_min) ** 2 > 1)
-        self.data['s'] = np.where(extrapolation_mask, entropy_extrapolation(A2_v), self.data['s']) * J / K / kg
+        self.data['s'] = np.where(extrapolation_mask, entropy_extrapolation(A2_v), self.data['s'])
 
         return entropy_extrapolation
 
     def dPdr(self, P, r, theta):
-        gravity = - (G * self.snapshot.total_mass) / (r ** 2)
+        gravity = - (6.674e-11 * self.central_mass) / (r ** 2)
+
         R = r * np.sin(theta)
-        centrifugal = R * (self.snapshot.best_fit_rotation_curve(R) ** 2) * np.sin(theta)
+        centrifugal = R * (self.snapshot.best_fit_rotation_curve_mks(R) ** 2) * np.sin(theta)
+
         v = get_v(R, r * np.cos(theta), self.linear_eccentricity)
         S = self.entropy_extrapolation(v)
-        rho = rho_EOS(S, P)
-        return rho * (gravity + centrifugal)
+
+        rho = rho_EOS(S, P, MKS=True)
+
+        result = rho * (gravity + centrifugal)
+
+        if np.any(result == np.NaN):
+            print('WARNING: NaN produced by dP/dr')
+
+        return result
 
     def extrapolate_pressure_v1(self):
 
@@ -543,7 +628,8 @@ class photosphere_sph:
 
     def extrapolate_pressure_v2(self):
 
-        for i in tqdm(range(self.data['r'].shape[0])):
+        for i in range(self.data['r'].shape[0]):
+            print(i)
 
             theta = self.data['theta'][i, 0]
             r_0 = np.sqrt((self.R_min*np.sin(theta)) ** 2 + (self.z_min*np.cos(theta)) ** 2)
@@ -553,12 +639,33 @@ class photosphere_sph:
             f = lambda P, r: self.dPdr(P, r, theta)
 
             r_solution = self.data['r'][i, j_0:]
-            P_solution = odeint(f, P_0, r_solution)
+            if P_0 != np.inf:
+                P_solution = odeint(f, P_0, r_solution)
+                self.data['P'][i:i+1, j_0:] = P_solution.T
 
-            self.data['P'][i, j_0] = P_solution
+        self.data['rho'] = rho_EOS(self.data['s'], self.data['P'], MKS=True)
+        self.data['T'] = T_EOS(self.data['s'], self.data['P'], MKS=True)
+        self.data['alpha'] = alpha(self.data['rho'] * kg * m ** -3, self.data['T'] * K, self.data['P'] * Pa, self.data['s'] * J / K /kg)
+        self.data['alpha_v'] = alpha(self.data['rho'] * kg * m ** -3, self.data['T'] * K, self.data['P'] * Pa, self.data['s'] * J / K /kg, D0=0)
 
+    def cool(self, dt):
+
+        self.data['L_r+'] = sigma * (self.data['T'] ** 4) * self.data['A_r+']
+        self.data['L_theta-'] = sigma * (self.data['T'] ** 4) * self.data['A_theta-']
+        self.data['L_theta+'] = sigma * (self.data['T'] ** 4) * self.data['A_theta+']
+
+        E_out = (self.data['L_r+'] + self.data['L_theta-'] + self.data['L_theta+']) * dt
+        E_in = (shift_right(self.data['L_r+']) + shift_up(self.data['L_theta-']) + shift_down(self.data['L_theta+'])) * dt
+
+        dE = E_in - E_out
+
+        plt.imshow(self.data['T'], cmap='jet')
+        plt.show()
+        plt.imshow(np.sign(dE), cmap='jet')
+        plt.show()
 
 snapshot1 = snapshot('snapshots/basic_twin/snapshot_0411.hdf5')
-#p1 = photosphere_cyl(snapshot1, 15 * Rearth, 200)
-p2 = photosphere_sph(snapshot1, 12 * Rearth, 30 * Rearth, 500)
-p2.extrapolate_pressure_v2()
+p2 = photosphere_sph(snapshot1, 12 * Rearth, 25 * Rearth, 100, n_theta=20)
+p2.cool(10)
+#p2.plot('tau', log=True, contours=[-2, 0, 0.5])
+p2.plot('tau_v', log=True, contours=[-2, 0, 0.5])

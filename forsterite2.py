@@ -38,7 +38,6 @@ NewEOS.T0REF, NewEOS.P0REF = 298., 1.E6
 
 NewEOS.loadaneos(aneosinfname='aneos-forsterite-2019-1.0.0/ANEOS.INPUT',
                  aneosoutfname='aneos-forsterite-2019-1.0.0/ANEOS.OUTPUT', silent=True)
-#woma.load_eos_tables()
 
 # change units to SI
 NewEOS.rho = NewEOS.rho * 1e3
@@ -73,6 +72,7 @@ def globalize(func):
 
 def frac_error(x1, x2):
     return np.abs(x1 - x2) / x2
+
 
 def reverse_EOS_table_rho_X(interpolator, table, rho, X):
 
@@ -211,13 +211,6 @@ def generate_table_u_rho(load_from_file=False, n=10):
             i = r[2]
             T_table[:, i] = r[0]
             error_table[:, i] = r[1]
-
-        # processes = [Process(target=task, args=(i,)) for i in range(x.shape[0])]
-        #
-        # for process in processes:
-        #     process.start()
-        # for process in processes:
-        #     process.join()
 
         # for i in tqdm(range(x.shape[0])):
         #     for j in range(x.shape[1]):

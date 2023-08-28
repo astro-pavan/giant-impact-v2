@@ -419,6 +419,25 @@ def alpha(rho, T, P, S, D0=1e-3):
 
 # COOLING CALCULATIONS HERE #
 
+def cool(P, S, du, remove_droplets=True):
+
+    rho_1, T_1, P_1, S_1, u_1 = EOS(P=P, S=S, check=True)
+
+    # cool with constant density
+    u_2 = u_1 - du
+    rho_2 = rho_1
+    rho_2, T_2, P_2, S_2, u_2 = EOS(u=u_2, rho=rho_2, check=True)
+
+    # remove droplets
+    if phase(S_2, P_2) == 2 and remove_droplets:
+        P_3 = P_2
+        S_3 = S_vapor_curve_v(P_2)
+        rho_3, T_3, P_3, S_3, u_3 = EOS(S=S_3, P=P_3, check=True)
+        return rho_3, T_3, P_3, S_3, u_3
+    else:
+        return rho_2, T_2, P_2, S_2, u_2
+
+
 def cooling_plot(P_1, S_1, du):
     rho_1, T_1, P_1, S_1, u_1 = EOS(P=P_1, S=S_1, check=True)
 
@@ -427,7 +446,7 @@ def cooling_plot(P_1, S_1, du):
     rho_2 = rho_1
     rho_2, T_2, P_2, S_2, u_2 = EOS(u=u_2, rho=rho_2, check=False)
 
-    # remove vapor
+    # remove droplets
     P_3 = P_2
     S_3 = S_vapor_curve_v(P_2)
     rho_3, T_3, P_3, S_3, u_3 = EOS(S=S_3, P=P_3, check=False)

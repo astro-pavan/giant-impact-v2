@@ -1,10 +1,9 @@
 # Calculates the thermodynamic properties and opacity of forsterite using the ANEOS-2019 model and Kraus (2012)
 import matplotlib.pyplot as plt
 import numpy as np
-import unyt
 
 np.set_printoptions(precision=3)
-from scipy.interpolate import RegularGridInterpolator, interp1d, interp2d
+from scipy.interpolate import RegularGridInterpolator, interp1d
 from scipy.optimize import minimize
 import woma
 from unyt import g, cm, K, J, kg, Pa, m, s
@@ -43,9 +42,11 @@ NewEOS.loadaneos(aneosinfname='aneos-forsterite-2019-1.0.0/ANEOS.INPUT',
 woma.load_eos_tables()
 
 # need to change the units to SI
+NewEOS.rho = NewEOS.rho * 1e3
 NewEOS.P, NewEOS.S = NewEOS.P * 1e9, NewEOS.S * 1e6
 NewEOS.vc.Sl, NewEOS.vc.Sv = NewEOS.vc.Sl * 1e6, NewEOS.vc.Sv * 1e6
 NewEOS.vc.Pl, NewEOS.vc.Pv = NewEOS.vc.Pl * 1e9, NewEOS.vc.Pv * 1e9
+NewEOS.vc.rl = NewEOS.vc.rl * 1e3
 NewEOS.U = NewEOS.U * 1e6
 NewEOS.cs = NewEOS.cs / 100
 P_critical_point, S_critical_point = NewEOS.cp.P * 1e9, NewEOS.cp.S * 1e6
@@ -66,8 +67,8 @@ def reverse_EOS_table_SP(S, P):
     rho_guess, T_guess = NewEOS.rho[j], NewEOS.T[i]
 
     # wrapper function for woma EOS
-    S_woma = lambda x: woma.s_rho_T(x[0] * 1e3, x[1], 400)
-    P_woma = lambda x: woma.P_T_rho(x[1], x[0] * 1e3, 400)
+    S_woma = lambda x: woma.s_rho_T(x[0], x[1], 400)
+    P_woma = lambda x: woma.P_T_rho(x[1], x[0], 400)
 
     # function that calculates the error between guess and target (S,P)
     woma_error = lambda x: np.abs(S_woma(x) - S) / S + np.abs(P_woma(x) - P) / P
@@ -92,8 +93,24 @@ rho_interpolation, T_interpolation, T2_interpolation = lambda x: x, lambda x: x,
 S_range, P_range = [4000, 12000], [1, 10]
 
 
-u_interpolation = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.U.T, method='cubic', bounds_error=False, fill_value=np.NaN)
-cs_interpolation = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.cs.T, method='cubic')
+u_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.U.T, method='cubic', bounds_error=False, fill_value=np.NaN)
+P_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.P.T, method='cubic', bounds_error=False, fill_value=np.NaN)
+S_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.S.T, method='cubic', bounds_error=False, fill_value=np.NaN)
+cs_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.cs.T, method='cubic')
+
+
+# used to make two arrays into an input for the interpolators
+def make_into_pair_array(arr1, arr2):
+
+    assert (np.all(arr1.shape == arr2.shape))
+    arr = np.array([arr1, arr2])
+
+    if arr1.ndim == 1:
+        return np.transpose(arr, axes=(1, 0))
+    elif arr1.ndim == 2:
+        return np.transpose(arr, axes=(1, 2, 0))
+
+    return None
 
 
 # generates the SP EOS table for interpolation
@@ -140,59 +157,78 @@ print('EOS table generated')
 
 # calculates rho from S and P, takes numpy array inputs
 # uses unyt
-def rho_EOS(S, P):
-    S.convert_to_mks()
-    P.convert_to_mks()
+def rho_EOS(S, P, MKS=False):
 
-    valid_region_mask = (S.value > S_range[0]) & (S.value < S_range[1]) &\
-                        (np.log10(P.value) > P_range[0]) & (np.log10(P.value) < P_range[1])
+    if MKS == False:
+        S.convert_to_mks()
+        P.convert_to_mks()
+        S, P = S.value, P.value
 
-    S = np.where(valid_region_mask, S, 5000) * J / K / kg
-    P = np.where(valid_region_mask, P, 1e7) * Pa
-    SP = np.array([S.value, np.log10(P.value)])
+    valid_region_mask = (S > S_range[0]) & (S < S_range[1]) & (np.log10(P) > P_range[0]) & (np.log10(P) < P_range[1])
 
-    return np.where(valid_region_mask, rho_interpolation(SP.T), np.NaN) * g * cm ** -3
+    S = np.where(valid_region_mask, S, 5000)
+    P = np.where(valid_region_mask, P, 1e7)
+
+    SP = make_into_pair_array(S, np.log10(P))
+
+    result = np.where(valid_region_mask, rho_interpolation(SP), np.NaN) * g * cm ** -3
+    if MKS:
+        result.convert_to_mks()
+        return result.value
+    else:
+        result
 
 
 # calculates T from S and P, takes numpy array inputs
 # uses unyt
-def T_EOS(S, P):
-    S.convert_to_mks()
-    P.convert_to_mks()
+def T_EOS(S, P, MKS=False):
 
-    valid_region_mask = (S.value > S_range[0]) & (S.value < S_range[1]) & \
-                        (np.log10(P.value) > P_range[0]) & (np.log10(P.value) < P_range[1])
+    if MKS == False:
+        S.convert_to_mks()
+        P.convert_to_mks()
+        S, P = S.value, P.value
 
-    S = np.where(valid_region_mask, S, 5000) * J / K / kg
-    P = np.where(valid_region_mask, P, 1e7) * Pa
-    SP = np.array([S.value, np.log10(P.value)])
+    valid_region_mask = (S > S_range[0]) & (S < S_range[1]) & \
+                        (np.log10(P) > P_range[0]) & (np.log10(P) < P_range[1])
 
-    return np.where(valid_region_mask, T_interpolation(SP.T), np.NaN) * K
+    S = np.where(valid_region_mask, S, 5000)
+    P = np.where(valid_region_mask, P, 1e7)
+
+    SP = make_into_pair_array(S, np.log10(P))
+
+    result = np.where(valid_region_mask, T_interpolation(SP), np.NaN) * K
+    if MKS:
+        result.convert_to_mks()
+        return result.value
+    else:
+        result
 
 
 def T2_EOS(u, rho):
-    rho.convert_to_units(g / cm ** 3)
-    u.convert_to_mks()
-
-    u_rho = np.array([u, rho])
-
-    return T2_interpolation(u_rho.T)
+    u_rho = make_into_pair_array(u, rho)
+    return T2_interpolation(u_rho)
 
 
-# calculates u from rho and T, takes numpy array inputs
-# uses unyt
+def P_EOS(rho, T):
+    rhoT = make_into_pair_array(rho, T)
+    return P_interp(rhoT)
+
+
+def S_EOS(rho, T):
+    rhoT = make_into_pair_array(rho, T)
+    return S_interp(rhoT)
+
+
 def u_EOS(rho, T):
-    rho.convert_to_units(g / cm ** 3)
-    T.convert_to_units(K)
-    rhoT = np.array([rho.value, T.value])
-    return u_interpolation(rhoT.T) * (J / kg)
+    rhoT = make_into_pair_array(rho, T)
+    return S_interp(rhoT)
 
 
 def cs_EOS(rho, T):
     rho.convert_to_units(g / cm ** 3)
     T.convert_to_units(K)
     rhoT = np.array([rho.value, T.value])
-    return cs_interpolation(rhoT.T) * (m / s)
+    return cs_interp(rhoT.T) * (m / s)
 
 
 # defines the vapor dome - giving P as a function of S
@@ -207,8 +243,8 @@ S_P_vapor_dome = interp1d(S_vapor_dome, P_vapor_dome)
 # 2 : liquid vapor mix
 # 3 : vapor
 def phase(S, P):
-    P.convert_to_units(Pa)
-    S.convert_to_units(J / K / kg)
+    # P.convert_to_units(Pa)
+    # S.convert_to_units(J / K / kg)
 
     min_P = 1e-5  # pressures below this are invalid
 
@@ -233,7 +269,7 @@ def alpha_v(rho, T):
 
 
 # gives the vapor dome - giving S as a function of P for the liquid and vapor parts
-PS_vapor_dome_l, PS_vapor_dome_v = interp1d(NewEOS.vc.Pl, NewEOS.vc.Sl), interp1d(NewEOS.vc.Pv, NewEOS.vc.Sv)
+PS_vapor_dome_l, PS_vapor_dome_v = interp1d(NewEOS.vc.Pl, NewEOS.vc.Sl), interp1d(NewEOS.vc.Pv, NewEOS.vc.Sv, bounds_error=False)
 
 
 # wrapper function for the above function - can deal with values outside the range of the curve
@@ -258,7 +294,21 @@ P_rho_vapor_curve_l = interp1d(NewEOS.vc.Pl, NewEOS.vc.rl)
 def rho_liquid_vc(P):
     return np.piecewise(P,
                         [P < 1.7e-6, np.logical_and(P > 1.7e-6, P < NewEOS.vc.Pl[0]), P > NewEOS.vc.Pl[0]],
-                        [3.11, P_rho_vapor_curve_l, 0.57])
+                        [3.11, P_rho_vapor_curve_l, 0.57]) * 1000
+
+
+def rho_vapor_vc(rho, P, S):
+
+    Sl = vapor_curve_S(P, phase='l')
+    Sv = vapor_curve_S(P, phase='v')
+
+    vq = np.where(P < P_critical_point, (S - Sl) / (Sv - Sl), 0)
+
+    rho_l = rho_liquid_vc(P)
+
+    rho_v = 1 / (((1/rho) + (1/rho_l))*((1/vq) - 1) + 1)
+
+    return rho_v
 
 
 # calculates the absorption of the liquid vapor mix
@@ -303,7 +353,7 @@ def alpha(rho, T, P, S, D0=1e-3):
         result = np.where(phase == 2, alpha_v(rho, T), result)
     result = np.where(phase == 3, alpha_v(rho, T), result)
 
-    return result * (m ** -1)
+    return result
 
 
 def big_plot():
@@ -355,4 +405,65 @@ def test():
     P = np.array([[1e5, 1e3], [1e5, 1e3]]) * Pa
 
     print(rho_EOS(S, P))
+
+
+def isochoric_cooling_plot():
+    for r in [1e-2, 1e-3, 1e-4, 1e-5, 1e-6]:
+        u_start = u_EOS(np.array([r]), np.array([8000]))
+        u = np.linspace(0, u_start)
+        rho = np.full_like(u, r)
+        T = T2_EOS(u, rho)[:, :, 0]
+        S = S_EOS(rho, T)
+        P = P_EOS(rho, T)
+        plt.plot(S, P, label=f'rho={r}')
+
+    plt.plot(NewEOS.vc.Sl, NewEOS.vc.Pl, 'k--')
+    plt.plot(NewEOS.vc.Sv, NewEOS.vc.Pv, 'k--')
+    plt.legend()
+    plt.yscale('log')
+    plt.show()
+    print(u_start)
+
+
+def isobaric_process():
+
+    s_start = S_EOS(np.array([1e-3]), np.array([8000]))
+    s = np.linspace(0, s_start)
+    P = np.full_like(s, 1e2)
+    rho = rho_EOS(s, P, MKS=True)
+    rho_l = rho_liquid_vc(P)
+    rho_v = rho_vapor_vc(rho / 1000, P, s)
+    plt.plot(s, rho)
+    plt.plot(s, rho_v)
+    plt.plot(s, rho_l)
+    plt.yscale('log')
+    plt.show()
+
+
+def cooling_plot(P_1, S_1, du):
+    rho_1 = rho_EOS(S_1, P_1, MKS=True)
+    T_1 = T_EOS(S_1, P_1, MKS=True)
+    u_1 = u_EOS(rho_1, T_1)
+
+    # cool with constant density
+    u_2 = u_1 - du
+    rho_2 = rho_1
+    T_2 = T2_EOS(u_2, rho_2)[:, 0]
+    P_2 = P_EOS(rho_2, T_2)
+    S_2 = S_EOS(rho_2, T_2)
+
+    # plot cooling track
+    u_plot = np.linspace(u_1, u_2)
+    rho_plot = np.full_like(u_plot, rho_2)
+    T_plot = T2_EOS(u_plot, rho_plot)[:, :, 0]
+    plt.plot(S_EOS(rho_plot, T_plot), P_EOS(rho_plot, T_plot), label='Cool at constant volume')
+    plt.plot(NewEOS.vc.Sl, NewEOS.vc.Pl, 'k--')
+    plt.plot(NewEOS.vc.Sv, NewEOS.vc.Pv, 'k--')
+    plt.legend()
+    plt.yscale('log')
+    plt.show()
+
+
+cooling_plot(np.array([1e5]), np.array([9000]), 10000)
+
 

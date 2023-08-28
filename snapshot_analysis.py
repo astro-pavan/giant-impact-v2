@@ -87,6 +87,42 @@ class snapshot:
         self.HD_limit_z.convert_to_mks()
         self.best_fit_rotation_curve, self.best_fit_rotation_curve_mks, self.CoRoL = self.rotational_analysis()
 
+    # calculates the EOS for all particles
+    def calculate_EOS(self):
+        print('Applying EOS to particles...')
+
+        gas = self.data.gas
+        woma.load_eos_tables()
+        gas.internal_energies.convert_to_mks()
+        gas.densities.convert_to_mks()
+
+        u, rho, mat_id = np.array(gas.internal_energies), np.array(gas.densities), np.array(gas.material_ids)
+
+        try:
+            T = woma.A1_T_u_rho(u, rho, mat_id)
+            P = woma.A1_P_u_rho(u, rho, mat_id)
+            S = woma.A1_s_u_rho(u, rho, mat_id)
+        except ValueError:
+            gas.material_ids_mass_weighted = gas.material_ids * gas.masses
+            return
+
+        gas.temperatures = sw.objects.cosmo_array(T * K)
+        gas.pressures = sw.objects.cosmo_array(P * Pa)
+        gas.entropy = sw.objects.cosmo_array(S * ((J / K) / kg))
+
+        gas.temperatures.cosmo_factor = gas.internal_energies.cosmo_factor
+        gas.pressures.cosmo_factor = gas.internal_energies.cosmo_factor
+        gas.entropy.cosmo_factor = gas.internal_energies.cosmo_factor
+
+        gas.temperatures_mass_weighted = gas.temperatures * gas.masses
+        gas.pressures_mass_weighted = gas.pressures * gas.masses
+        gas.entropy_mass_weighted = gas.entropy * gas.masses
+        gas.internal_energies_mass_weighted = gas.internal_energies * gas.masses
+
+        gas.material_ids_mass_weighted = gas.material_ids * gas.masses
+
+        print('EOS calculated')
+
     # calculates the centre of mass in the snapshot
     def get_center_of_mass(self):
 

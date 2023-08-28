@@ -646,7 +646,7 @@ class photosphere_sph:
         def extrapolate(i):
 
             theta = self.data['theta'][i, 0]
-            print(f'Extrapolating at theta = {theta}...')
+            print(f'Extrapolating at theta = {theta:.3f}...')
 
             r_0 = np.sqrt((self.R_min * np.sin(theta)) ** 2 + (self.z_min * np.cos(theta)) ** 2)
             j_0 = self.get_index(r_0, theta)[1]
@@ -658,9 +658,11 @@ class photosphere_sph:
             if P_0 != np.inf:
                 P_solution = odeint(f, P_0, r_solution)
             else:
-                P_solution = np.full_like(self.data['r'][i, j_0:], np.NaN)
+                P_solution = np.full_like(self.data['r'][i, j_0:], 0)
 
-            print(f'Extrapolation at theta = {theta} complete')
+            P_solution = np.nan_to_num(P_solution)
+
+            print(f'Extrapolation at theta = {theta:.3f} complete')
             return P_solution.T, j_0, i
 
         if __name__ == '__main__':
@@ -671,20 +673,7 @@ class photosphere_sph:
             i, j_0 = r[2], r[1]
             self.data['P'][i:i + 1, j_0:] = r[0]
 
-        # for i in range(self.data['r'].shape[0]):
-        #     print(i)
-        #
-        #     theta = self.data['theta'][i, 0]
-        #     r_0 = np.sqrt((self.R_min*np.sin(theta)) ** 2 + (self.z_min*np.cos(theta)) ** 2)
-        #     j_0 = self.get_index(r_0, theta)[1]
-        #     P_0 = self.data['P'][i, j_0]
-        #
-        #     f = lambda P, r: self.dPdr(P, r, theta)
-        #
-        #     r_solution = self.data['r'][i, j_0:]
-        #     if P_0 != np.inf:
-        #         P_solution = odeint(f, P_0, r_solution)
-        #         self.data['P'][i:i+1, j_0:] = P_solution.T
+        #         self.data['P'][i:i+1, j_0:] = P_solution.T-
 
         self.data['P'] = np.nan_to_num(self.data['P'])
 
@@ -725,5 +714,5 @@ class photosphere_sph:
 
 
 snapshot1 = snapshot('snapshots/basic_twin/snapshot_0411.hdf5')
-p2 = photosphere_sph(snapshot1, 12 * Rearth, 25 * Rearth, 100, n_theta=20)
-p2.plot('alpha_v')
+p2 = photosphere_sph(snapshot1, 12 * Rearth, 25 * Rearth, 100, n_theta=100)
+p2.plot('rho')

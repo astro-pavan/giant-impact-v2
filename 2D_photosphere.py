@@ -12,8 +12,7 @@ from unyt import cm, g, Rearth, J, K, kg, G, m, stefan_boltzmann_constant, W, di
 from tqdm import tqdm
 
 from snapshot_analysis import snapshot, gas_slice, data_labels
-from forsterite import *
-import forsterite
+import forsterite2 as fst
 
 sigma = 5.670374419e-8
 
@@ -147,10 +146,10 @@ class photosphere_cyl:
 
         self.extrapolate_pressure(self.snapshot.HD_limit_R * 0.9, self.snapshot.HD_limit_z * 0.9)
 
-        self.data['alpha'] = alpha(self.data['rho'], self.data['T'], self.data['P'], self.data['s'])
-        self.data['alpha_v'] = alpha(self.data['rho'], self.data['T'], self.data['P'], self.data['s'], D0=0)
+        self.data['alpha'] = fst.alpha(self.data['rho'], self.data['T'], self.data['P'], self.data['s'])
+        self.data['alpha_v'] = fst.alpha(self.data['rho'], self.data['T'], self.data['P'], self.data['s'], D0=0)
 
-        self.data['u'] = u_EOS(self.data['rho'], self.data['T']).T
+        self.data['u'] = fst.u_EOS(self.data['rho'], self.data['T']).T
 
         self.data['t_sound'] = self.data['r'] / self.data['c_s']
         self.data['t_sound'].convert_to_units(unyt.s)
@@ -266,7 +265,7 @@ class photosphere_cyl:
 
             omega = self.snapshot.best_fit_rotation_curve(R)
             grav = (G * self.snapshot.total_mass) / ((R ** 2 + z ** 2) ** (3 / 2))
-            density, temp = rho_EOS(S.value, P.value, MKS=True) * kg * (m ** -3), T_EOS(S, P)
+            density, temp = fst.rho_EOS(S.value, P.value) * kg * (m ** -3), fst.T_EOS(S, P)
 
             self.data['rho'][i_min:i_max, j] = density
             self.data['T'][i_min:i_max, j] = temp
@@ -287,7 +286,7 @@ class photosphere_cyl:
             R, z = self.data['R'][i, j_min:j_max], self.data['z'][i, j_min:j_max]
 
             grav = (G * self.snapshot.total_mass) / ((R ** 2 + z ** 2) ** (3 / 2))
-            density, temp = rho_EOS(S, P), T_EOS(S, P)
+            density, temp = fst.rho_EOS(S, P), fst.T_EOS(S, P)
 
             self.data['rho'][i, j_min:j_max] = density
             self.data['T'][i, j_min:j_max] = temp
@@ -347,7 +346,7 @@ class photosphere_cyl:
 
             omega = self.snapshot.best_fit_rotation_curve(R)
             grav = (G * self.snapshot.total_mass) / ((R ** 2 + z ** 2) ** (3 / 2))
-            density, temp = rho_EOS(S, P), T_EOS(S, P)
+            density, temp = fst.rho_EOS(S, P), fst.T_EOS(S, P)
 
             self.data['rho'][:, j] = density
             self.data['T'][:, j] = temp
@@ -595,7 +594,7 @@ class photosphere_sph:
 
         S = self.entropy_extrapolation(r, theta)
 
-        rho = rho_EOS(S, P, MKS=True)
+        rho = fst.rho_EOS(S, P)
 
         result = rho * (gravity + centrifugal)
 
@@ -616,7 +615,7 @@ class photosphere_sph:
             omega = self.snapshot.best_fit_rotation_curve(R)
             gravity = - (G * self.snapshot.total_mass) / (r ** (3 / 2))
             centrifugal = R * (omega ** 2)
-            density, temp = rho_EOS(S, P), T_EOS(S, P)
+            density, temp = fst.rho_EOS(S, P), fst.T_EOS(S, P)
 
             self.data['rho'][:, j] = density
             self.data['T'][:, j] = temp
@@ -648,10 +647,10 @@ class photosphere_sph:
                 P_solution = odeint(f, P_0, r_solution)
                 self.data['P'][i:i+1, j_0:] = P_solution.T
 
-        self.data['rho'] = rho_EOS(self.data['s'], self.data['P'], MKS=True)
-        self.data['T'] = T_EOS(self.data['s'], self.data['P'], MKS=True)
-        self.data['alpha'] = alpha(self.data['rho'] * kg * m ** -3, self.data['T'] * K, self.data['P'] * Pa, self.data['s'] * J / K /kg)
-        self.data['alpha_v'] = alpha(self.data['rho'] * kg * m ** -3, self.data['T'] * K, self.data['P'] * Pa, self.data['s'] * J / K /kg, D0=0)
+        self.data['rho'] = fst.rho_EOS(self.data['s'], self.data['P'])
+        self.data['T'] = fst.T_EOS(self.data['s'], self.data['P'])
+        self.data['alpha'] = fst.alpha(self.data['rho'], self.data['T'], self.data['P'], self.data['s'])
+        self.data['alpha_v'] = fst.alpha(self.data['rho'], self.data['T'], self.data['P'], self.data['s'], D0=0)
 
     def cool(self, dt):
 
@@ -671,18 +670,18 @@ class photosphere_sph:
 
     def remove_droplets(self):
 
-        condensation_mask = phase(self.data['s'], self.data['P']) == 2
-        new_S = np.where(condensation_mask, PS_vapor_dome_v(self.data['P']), self.data['s'])
+        condensation_mask = fst.phase(self.data['s'], self.data['P']) == 2
+        new_S = np.where(condensation_mask, fst.S_vapor_curve_v(self.data['P']), self.data['s'])
 
-        rho_drop = rho_liquid_vc(self.data['P'])
-        rho_gas = rho_vapor_vc(self.data['rho'], self.data['P'], self.data['s'])
+        rho_drop = fst.rho_liquid(self.data['P'])
+        rho_gas = fst.rho_vapor(self.data['rho'], self.data['s'], self.data['P'])
         t_infall = (2 * rho_drop * 1e-3) / (rho_gas * 0.5 * self.data['R'] * self.data['omega'])
 
         self.data['s'] = new_S
 
     def hydrostatic_equilibrium(self):
+        pass
 
-        rho_interpolation
 
 snapshot1 = snapshot('snapshots/basic_twin/snapshot_0411.hdf5')
 p2 = photosphere_sph(snapshot1, 12 * Rearth, 25 * Rearth, 100, n_theta=20)

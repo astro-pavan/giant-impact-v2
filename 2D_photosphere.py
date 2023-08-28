@@ -647,8 +647,10 @@ class photosphere_sph:
                 P_solution = odeint(f, P_0, r_solution)
                 self.data['P'][i:i+1, j_0:] = P_solution.T
 
+        self.data['P'] = np.nan_to_num(self.data['P'])
+
         self.data['rho'] = fst.rho_EOS(self.data['s'], self.data['P'])
-        self.data['T'] = fst.T_EOS(self.data['s'], self.data['P'])
+        self.data['T'] = fst.T1_EOS(self.data['s'], self.data['P'])
         self.data['alpha'] = fst.alpha(self.data['rho'], self.data['T'], self.data['P'], self.data['s'])
         self.data['alpha_v'] = fst.alpha(self.data['rho'], self.data['T'], self.data['P'], self.data['s'], D0=0)
 
@@ -685,6 +687,4 @@ class photosphere_sph:
 
 snapshot1 = snapshot('snapshots/basic_twin/snapshot_0411.hdf5')
 p2 = photosphere_sph(snapshot1, 12 * Rearth, 25 * Rearth, 100, n_theta=20)
-p2.remove_droplets()
-
-
+p2.plot('alpha_v')

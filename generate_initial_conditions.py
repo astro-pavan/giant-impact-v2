@@ -226,7 +226,7 @@ def create_restart(name):
         file.writelines(data)
 
     file.close()
-
+    
 
 def create_preset_conditions():
 

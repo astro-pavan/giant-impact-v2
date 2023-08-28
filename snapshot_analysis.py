@@ -5,7 +5,6 @@ from swiftsimio.visualisation.slice import slice_gas
 from swiftsimio.visualisation.rotation import rotation_matrix_from_vector
 import woma
 from unyt import Rearth, Pa, K, kg, J, m, s, g, cm
-from unyt.dimensions import length, time
 import unyt
 unyt.define_unit("M_earth", 5.9722e24 * unyt.kg)
 M_earth = unyt.M_earth
@@ -69,6 +68,7 @@ class snapshot:
         self.total_mass = np.sum(self.data.gas.masses)
         self.total_mass.convert_to_units(M_earth)
         print(f'Total mass of particles {self.total_mass:.4e}')
+        self.total_mass.convert_to_mks()
 
         self.total_angular_momentum = 0
         self.total_specific_angular_momentum = 0
@@ -83,7 +83,9 @@ class snapshot:
         self.calculate_velocities()
 
         self.HD_limit_R, self.HD_limit_z = self.particle_density_analysis()
-        self.best_fit_rotation_curve, self.CoRoL = self.rotational_analysis()
+        self.HD_limit_R.convert_to_mks()
+        self.HD_limit_z.convert_to_mks()
+        self.best_fit_rotation_curve, self.best_fit_rotation_curve_mks, self.CoRoL = self.rotational_analysis()
 
     # calculates the centre of mass in the snapshot
     def get_center_of_mass(self):
@@ -114,8 +116,7 @@ class snapshot:
         result.convert_to_units(M_earth)
         return result
 
-    # calculates the EOS for all particles
-    def calculate_EOS(self):
+    # calculates the EOS for all particles    def calculate_EOS(self):
         print('Applying EOS to particles...')
 
         gas = self.data.gas
@@ -265,11 +266,11 @@ class snapshot:
 
         # rotation curve function (uses unyt)
         def best_fit(R):
-            try:
-                R.convert_to_units(Rearth)
-                return (10 ** (two_lines(np.log10(R.value), a0, b0, c0))) * (s ** -1)
-            except AttributeError:
-                return (10 ** (two_lines(np.log10(R), a0, b0, c0))) * (s ** -1)
+            R.convert_to_units(Rearth)
+            return (10 ** (two_lines(np.log10(R.value), a0, b0, c0))) * (s ** -1)
+
+        def best_fit_mks(R):
+            return (10 ** (two_lines(np.log10(R * 6371000), a0, b0, c0)))
 
         CoRoL = b0 * Rearth
 
@@ -302,7 +303,7 @@ class snapshot:
             else:
                 plt.show()
 
-        return best_fit, CoRoL
+        return best_fit, best_fit_mks, CoRoL
 
 
 # class that stores a 2D slice of the SWIFT snapshot used for plotting and analysis

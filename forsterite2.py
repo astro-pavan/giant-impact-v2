@@ -227,6 +227,8 @@ def generate_table_u_rho(load_from_file=False, n=10):
 
 
 def make_into_pair_array(arr1, arr2):
+    arr1, arr2 = np.nan_to_num(arr1), np.nan_to_num(arr2)
+
     if type(arr1) is np.ndarray and type(arr2) is np.ndarray:
 
         if arr1.ndim == 0:

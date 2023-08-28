@@ -1,10 +1,9 @@
 # Calculates the thermodynamic properties and opacity of forsterite using the ANEOS-2019 model and Kraus (2012)
 import matplotlib.pyplot as plt
 import numpy as np
-import unyt
 
 np.set_printoptions(precision=3)
-from scipy.interpolate import RegularGridInterpolator, interp1d, interp2d
+from scipy.interpolate import RegularGridInterpolator, interp1d
 from scipy.optimize import minimize
 import woma
 from unyt import g, cm, K, J, kg, Pa, m, s
@@ -43,9 +42,11 @@ NewEOS.loadaneos(aneosinfname='aneos-forsterite-2019-1.0.0/ANEOS.INPUT',
 woma.load_eos_tables()
 
 # need to change the units to SI
+NewEOS.rho = NewEOS.rho * 1e3
 NewEOS.P, NewEOS.S = NewEOS.P * 1e9, NewEOS.S * 1e6
 NewEOS.vc.Sl, NewEOS.vc.Sv = NewEOS.vc.Sl * 1e6, NewEOS.vc.Sv * 1e6
 NewEOS.vc.Pl, NewEOS.vc.Pv = NewEOS.vc.Pl * 1e9, NewEOS.vc.Pv * 1e9
+NewEOS.vc.rl = NewEOS.vc.rl * 1e3
 NewEOS.U = NewEOS.U * 1e6
 NewEOS.cs = NewEOS.cs / 100
 P_critical_point, S_critical_point = NewEOS.cp.P * 1e9, NewEOS.cp.S * 1e6
@@ -66,8 +67,8 @@ def reverse_EOS_table_SP(S, P):
     rho_guess, T_guess = NewEOS.rho[j], NewEOS.T[i]
 
     # wrapper function for woma EOS
-    S_woma = lambda x: woma.s_rho_T(x[0] * 1e3, x[1], 400)
-    P_woma = lambda x: woma.P_T_rho(x[1], x[0] * 1e3, 400)
+    S_woma = lambda x: woma.s_rho_T(x[0], x[1], 400)
+    P_woma = lambda x: woma.P_T_rho(x[1], x[0], 400)
 
     # function that calculates the error between guess and target (S,P)
     woma_error = lambda x: np.abs(S_woma(x) - S) / S + np.abs(P_woma(x) - P) / P
@@ -96,6 +97,20 @@ u_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.U.T, method='c
 P_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.P.T, method='cubic', bounds_error=False, fill_value=np.NaN)
 S_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.S.T, method='cubic', bounds_error=False, fill_value=np.NaN)
 cs_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.cs.T, method='cubic')
+
+
+# used to make two arrays into an input for the interpolators
+def make_into_pair_array(arr1, arr2):
+
+    assert (np.all(arr1.shape == arr2.shape))
+    arr = np.array([arr1, arr2])
+
+    if arr1.ndim == 1:
+        return np.transpose(arr, axes=(1, 0))
+    elif arr1.ndim == 2:
+        return np.transpose(arr, axes=(1, 2, 0))
+
+    return None
 
 
 # generates the SP EOS table for interpolation
@@ -153,12 +168,8 @@ def rho_EOS(S, P, MKS=False):
 
     S = np.where(valid_region_mask, S, 5000)
     P = np.where(valid_region_mask, P, 1e7)
-    SP = np.array([S, np.log10(P)])
 
-    if len(S.shape) == 2:
-        SP = np.transpose(SP, axes=(1,2,0))
-    else:
-        SP = SP.T
+    SP = make_into_pair_array(S, np.log10(P))
 
     result = np.where(valid_region_mask, rho_interpolation(SP), np.NaN) * g * cm ** -3
     if MKS:
@@ -182,12 +193,8 @@ def T_EOS(S, P, MKS=False):
 
     S = np.where(valid_region_mask, S, 5000)
     P = np.where(valid_region_mask, P, 1e7)
-    SP = np.array([S, np.log10(P)])
 
-    if len(S.shape) == 2:
-        SP = np.transpose(SP, axes=(1,2,0))
-    else:
-        SP = SP.T
+    SP = make_into_pair_array(S, np.log10(P))
 
     result = np.where(valid_region_mask, T_interpolation(SP), np.NaN) * K
     if MKS:
@@ -198,51 +205,22 @@ def T_EOS(S, P, MKS=False):
 
 
 def T2_EOS(u, rho):
-
-    u_rho = np.array([u, rho])
-
-    if len(u.shape) == 2:
-        u_rho = np.transpose(u_rho, axes=(1, 2, 0))
-    else:
-        u_rho = u_rho.T
-
-    return T2_interpolation(u_rho.T)
+    u_rho = make_into_pair_array(u, rho)
+    return T2_interpolation(u_rho)
 
 
 def P_EOS(rho, T):
-
-    rhoT = np.array([rho, T])
-
-    if len(rho.shape) == 2:
-        rhoT = np.transpose(rhoT, axes=(1,2,0))
-    else:
-        rhoT = rhoT.T
-
+    rhoT = make_into_pair_array(rho, T)
     return P_interp(rhoT)
 
 
 def S_EOS(rho, T):
-
-    rhoT = np.array([rho, T])
-
-    if len(rho.shape) == 2:
-        rhoT = np.transpose(rhoT, axes=(1, 2, 0))
-    else:
-        rhoT = rhoT.T
-
+    rhoT = make_into_pair_array(rho, T)
     return S_interp(rhoT)
 
 
-# calculates u from rho and T, takes numpy array inputs
-# uses unyt
 def u_EOS(rho, T):
-    rhoT = np.array([rho, T])
-
-    if len(rho.shape) == 2:
-        rhoT = np.transpose(rhoT, axes=(1, 2, 0))
-    else:
-        rhoT = rhoT.T
-
+    rhoT = make_into_pair_array(rho, T)
     return S_interp(rhoT)
 
 
@@ -330,7 +308,7 @@ def rho_vapor_vc(rho, P, S):
 
     rho_v = 1 / (((1/rho) + (1/rho_l))*((1/vq) - 1) + 1)
 
-    return rho_v * 1000
+    return rho_v
 
 
 # calculates the absorption of the liquid vapor mix
@@ -429,15 +407,63 @@ def test():
     print(rho_EOS(S, P))
 
 
-u_start = u_EOS(np.array([1e-3]), np.array([4000]))
-u = np.linspace(0, u_start)
-rho = np.full_like(u, 1e-3)
-T = T2_EOS(u, rho)
-S = S_EOS(rho, T)
-P = P_EOS(rho, T)
-plt.plot(S, P)
-plt.plot(NewEOS.vc.Sl, NewEOS.vc.Pl, 'k--')
-plt.plot(NewEOS.vc.Sv, NewEOS.vc.Pv, 'k--')
-plt.yscale('log')
-plt.show()
-print(u_start)
+def isochoric_cooling_plot():
+    for r in [1e-2, 1e-3, 1e-4, 1e-5, 1e-6]:
+        u_start = u_EOS(np.array([r]), np.array([8000]))
+        u = np.linspace(0, u_start)
+        rho = np.full_like(u, r)
+        T = T2_EOS(u, rho)[:, :, 0]
+        S = S_EOS(rho, T)
+        P = P_EOS(rho, T)
+        plt.plot(S, P, label=f'rho={r}')
+
+    plt.plot(NewEOS.vc.Sl, NewEOS.vc.Pl, 'k--')
+    plt.plot(NewEOS.vc.Sv, NewEOS.vc.Pv, 'k--')
+    plt.legend()
+    plt.yscale('log')
+    plt.show()
+    print(u_start)
+
+
+def isobaric_process():
+
+    s_start = S_EOS(np.array([1e-3]), np.array([8000]))
+    s = np.linspace(0, s_start)
+    P = np.full_like(s, 1e2)
+    rho = rho_EOS(s, P, MKS=True)
+    rho_l = rho_liquid_vc(P)
+    rho_v = rho_vapor_vc(rho / 1000, P, s)
+    plt.plot(s, rho)
+    plt.plot(s, rho_v)
+    plt.plot(s, rho_l)
+    plt.yscale('log')
+    plt.show()
+
+
+def cooling_plot(P_1, S_1, du):
+    rho_1 = rho_EOS(S_1, P_1, MKS=True)
+    T_1 = T_EOS(S_1, P_1, MKS=True)
+    u_1 = u_EOS(rho_1, T_1)
+
+    # cool with constant density
+    u_2 = u_1 - du
+    rho_2 = rho_1
+    T_2 = T2_EOS(u_2, rho_2)[:, 0]
+    P_2 = P_EOS(rho_2, T_2)
+    S_2 = S_EOS(rho_2, T_2)
+
+    # plot cooling track
+    u_plot = np.linspace(u_1, u_2)
+    rho_plot = np.full_like(u_plot, rho_2)
+    T_plot = T2_EOS(u_plot, rho_plot)[:, :, 0]
+    plt.plot(S_EOS(rho_plot, T_plot), P_EOS(rho_plot, T_plot), label='Cool at constant volume')
+    plt.plot(NewEOS.vc.Sl, NewEOS.vc.Pl, 'k--')
+    plt.plot(NewEOS.vc.Sv, NewEOS.vc.Pv, 'k--')
+    plt.legend()
+    plt.yscale('log')
+    plt.show()
+
+
+cooling_plot(np.array([1e5]), np.array([9000]), 10000)
+
+

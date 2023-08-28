@@ -235,6 +235,12 @@ def generate_table_u_rho(load_from_file=False, n=10):
 
 def make_into_pair_array(arr1, arr2):
     if type(arr1) is np.ndarray and type(arr2) is np.ndarray:
+
+        if arr1.ndim == 0:
+            return np.array([arr1[()], arr2[0]])
+        if arr2.ndim == 0:
+            return np.array([arr1[0], arr2[()]])
+
         assert np.all(arr1.shape == arr2.shape)
         assert arr1.ndim == 1 or arr1.ndim == 2
 

@@ -16,26 +16,32 @@ from scipy.optimize import curve_fit
 
 data_labels = {
     "z": "z ($R_{\oplus}$)",
-    "R": "Cylindrical Radius ($R_{\oplus}$)",
+    "R": "R ($R_{\oplus}$)",
     "rho": "Density ($g/cm^{3}$)",
     "T": "Temperature (K)",
+    "T2": "Temperature (K)",
     "P": "Pressure (Pa)",
     "s": "Specific Entropy (J/K/kg)",
     "omega": "Angular Velocity (rad/s)",
     "alpha": "Absorption ($m^{-1}$)",
+    "alpha_v": "Absorption ($m^{-1}$)",
     "phase": "Phase",
     "v_head": "Headwind (m/s)",
     "v_r": "Radial Velocity (m/s)",
     "c_s": "Sound Speed (m/s)",
     "u": "Specific Internal Energy (J/kg)",
     "rho_u": "Internal Energy Density ($J/m^{3}$)",
+    "rho_E": "Internal Energy Density ($J/m^{3}$)",
     "matid": "Material ID",
     "t_sound": "Sound crossing time (s)",
     "t_cool": "Cooling time (s)",
     "E": "Energy (J)",
     "L": "Luminosity (W)",
     "m": "Mass (kg)",
-    "dL": "Luminosity (W)"
+    "dL": "Luminosity (W)",
+    "change": "",
+    "tau": "Optical Depth",
+    "tau_v": "Optical Depth"
 }
 
 colormaps = {

@@ -16,11 +16,22 @@ from snapshot_analysis import snapshot, gas_slice, data_labels
 import forsterite2 as fst
 
 sigma = 5.670374419e-8
+L_sun = 3.828e26
+pi = np.pi
+
+
+def cos(theta):
+    return np.cos(theta)
+
+
+def sin(theta):
+    return np.sin(theta)
 
 
 def globalize(func):
     def result(*args, **kwargs):
         return func(*args, **kwargs)
+
     result.__name__ = result.__qualname__ = uuid.uuid4().hex
     setattr(sys.modules[result.__module__], result.__name__, result)
     return result
@@ -49,349 +60,17 @@ def shift_down(arr):
     return result
 
 
-class photosphere_cyl:
-
-    def __init__(self, snapshot, size, resolution):
-
-        self.data, self.data_sphere = {}, {}
-        self.snapshot = snapshot
-
-        # used to convert coordinates to indexes in the slices
-        pixels_per_Rearth = resolution / float(2 * size)
-        self.cell_size = (size * 2) / resolution
-        self.size, self.resolution = size, resolution
-
-        # loads a cross-section of the snapshot
-        def get_section(phi, fold=True):
-            # properties used to load the slices
-            center = snapshot.center_of_mass
-            rotate_z = rotation_matrix_from_vector([np.cos(phi), np.sin(phi), 0], axis='z')
-            rotate_x = rotation_matrix_from_vector([np.cos(phi), np.sin(phi), 0], axis='x')
-            matrix = np.matmul(rotate_x, rotate_z)
-            limits = [center[0] - size, center[0] + size, center[1] - size, center[1] + size]
-
-            # loads density slice
-            mass_slice = slice_gas(snapshot.data,
-                z_slice=0,
-                resolution=resolution,
-                project="masses",
-                region=limits, rotation_matrix=matrix, rotation_center=center,
-                parallel=True
-            )
-
-            # function that loads the slice of each property
-            def get_slice(parameter):
-                mass_weighted_slice = slice_gas(
-                    snapshot.data,
-                    z_slice=0,
-                    resolution=resolution,
-                    project=f'{parameter}_mass_weighted',
-                    region=limits, rotation_matrix=matrix, rotation_center=center,
-                    parallel=True
-                )
-
-                return mass_weighted_slice / mass_slice
-
-            # loading slices of each property
-            temperature_slice = get_slice('temperatures')
-            pressure_slice, entropy_slice = get_slice('pressures'), get_slice('entropy')
-            angular_momentum_slice = get_slice('specific_angular_momentum')
-
-            mass_slice.convert_to_units(g / cm ** 3)
-
-            data = {'rho': mass_slice, 'T': temperature_slice, 'P': pressure_slice, 's': entropy_slice,
-                    'h': angular_momentum_slice}
-
-            if fold:
-                for k in data.keys():
-                    data[k] = (data[k] + np.fliplr(data[k])) / 2
-
-            return data
-
-        # loads multiple sections at different phi angles and averages them
-        def get_averaged_data(n):
-
-            data = get_section(0)
-
-            print('Loading data into photosphere model:')
-            for i in tqdm(range(1, n)):
-                vals = get_section(np.pi/n * i)
-                for k in self.data.keys():
-                    data[k] = (i * data[k] + vals[k]) / (i + 1)
-
-            return data
-
-        # loads phi averaged data
-        self.data = get_averaged_data(10)
-
-        # removes half the data array
-        for k in self.data.keys():
-            self.data[k] = self.data[k][:,int(resolution/2):]
-
-        # extends the data array
-        extend_R = int(resolution)
-        extend_z = int(resolution / 2)
-        for k in self.data.keys():
-            unit = self.data[k].units
-            self.data[k] = np.pad(self.data[k], ((extend_z, extend_z), (0, extend_R)), 'constant') * unit
-            #self.data[k] = np.pad(self.data[k], ((extend_z, extend_z), (0, 0)), 'constant') * unit
-
-        # calculating coordinates
-        rows, cols = self.data['rho'].shape[0], self.data['rho'].shape[1]
-        self.z_height = int(rows/2)
-        self.R_size, self.z_size = cols * self.cell_size, self.z_height * self.cell_size
-        iX, iY = np.meshgrid(np.arange(cols), np.arange(rows))
-        self.data['R'] = ((iX + 0.5) / pixels_per_Rearth) * Rearth
-        self.data['z'] = ((iY - self.z_height + 0.5) / pixels_per_Rearth) * Rearth
-        self.data['r'] = np.sqrt(self.data['R'] ** 2 + self.data['z'] ** 2)
-        self.data['theta'] = np.arctan2(self.data['R'], self.data['z'])
-
-        self.data['c_s'] = np.zeros_like(self.data['theta']) * (m / unyt.s)
-        self.data['u'] = np.zeros_like(self.data['theta']) * (J / kg)
-
-        print('Data loaded')
-
-        self.extrapolate_entropy(self.snapshot.HD_limit_R * 0.9, self.snapshot.HD_limit_z * 0.9)
-
-        self.extrapolate_pressure(self.snapshot.HD_limit_R * 0.9, self.snapshot.HD_limit_z * 0.9)
-
-        self.data['alpha'] = fst.alpha(self.data['rho'], self.data['T'], self.data['P'], self.data['s'])
-        self.data['alpha_v'] = fst.alpha(self.data['rho'], self.data['T'], self.data['P'], self.data['s'], D0=0)
-
-        self.data['u'] = fst.u_EOS(self.data['rho'], self.data['T']).T
-
-        self.data['t_sound'] = self.data['r'] / self.data['c_s']
-        self.data['t_sound'].convert_to_units(unyt.s)
-
-        self.data['dV'] = 2*np.pi*self.data['R']*self.data['dz']*self.data['dR']
-        self.data['m'] = self.data['dV'] * self.data['rho']
-        self.data['m'].convert_to_units(kg)
-
-        self.data['L'] = 2*np.pi*self.data['R']*self.data['dz']*stefan_boltzmann_constant*(self.data['T'] ** 4)*\
-                         self.data['alpha']*self.data['dR']
-        self.data['dL'] = np.abs(np.roll(self.data['L'], -1, axis=1) - self.data['L'])
-
-        self.data['E'] = self.data['dV']*self.data['rho']*self.data['u']
-        self.data['E'].convert_to_units(J)
-        self.data['L'].convert_to_units(W)
-        self.data['t_cool'] = self.data['E'] / self.data['dL']
-        self.data['t_cool'].convert_to_units(unyt.s)
-
-        # colours = ['red', 'orange', 'gold', 'green', 'blue', 'purple']
-        # z = [0, 0.2, 0.4, 0.6, 0.8, 1]
-        # theta = [np.pi * 0.5, np.pi * 0.4, np.pi * 0.3, np.pi * 0.2, np.pi * 0.1, 0]
-        #
-        # # for i in range(6):
-        # #     i_z, i_R = self.index_cylinder(1*Rearth, z[i]*Rearth)
-        # #     plt.plot(self.data['s'][i_z, i_R:].value, self.data['P'][i_z, i_R:].value, label=f'z={z[i]}', c=colours[i])
-        #
-        # for i in range(6):
-        #     indexes = self.index_polar(np.linspace(1, 15) * Rearth, theta[i])
-        #     s = self.data['s'][tuple(indexes)].value
-        #     p = self.data['P'][tuple(indexes)].value
-        #     plt.plot(s, p, label=f'theta={theta[i]}', c=colours[i])
-        #
-        # plt.plot(forsterite.NewEOS.vc.Sl, forsterite.NewEOS.vc.Pl, 'k--')
-        # plt.plot(forsterite.NewEOS.vc.Sv, forsterite.NewEOS.vc.Pv, 'k--')
-        # plt.xlim(5000, 11000)
-        # plt.ylim(1e2, 1e10)
-        # plt.xlabel(data_labels['s'])
-        # plt.ylabel(data_labels['P'])
-        # plt.yscale('log')
-        # plt.legend()
-        # plt.show()
-
-    def plot(self, parameter):
-        central_mask = np.sqrt(self.data['R'] ** 2 + self.data['z'] ** 2) > 3*Rearth
-        z = self.data[parameter].value if parameter == 'T' or parameter == 's' else np.log10(self.data[parameter].value)
-        #z = np.where(central_mask, z, np.NaN)
-        img = plt.imshow(z, cmap='jet')
-        plt.colorbar(img, label=f'log[{data_labels[parameter]}]')
-        plt.show()
-
-    def sphere_plot(self, parameter):
-        z = np.log10(self.data_sphere[parameter].value)
-        x, y = self.data_sphere['R'].value, self.data_sphere['z'].value
-
-        plt.contourf(x, y, z, 100, cmap='jet')
-        plt.show()
-
-    # converts r and theta values into indexes compatible with the data array
-    def index_polar(self, r, theta):
-        R, z = r * np.sin(theta), r * np.cos(theta)
-        i_R = np.int32(R / self.cell_size)
-        i_z = np.int32((z / self.cell_size) + self.z_height)
-        return i_z, i_R
-
-    # converts R and z values into indexes compatible with the data array
-    def index_cylinder(self, R, z):
-        i_R = np.int32(R / self.cell_size)
-        i_z = np.int32((z / self.cell_size) + self.z_height)
-        return i_z, i_R
-
-    # extrapolates entropy adiabatically with elliptic coords
-    def extrapolate_entropy(self, R_min, z_min):
-
-        print(f'Extrapolating from R = {R_min}, z = {z_min}')
-
-        n_v = 400
-        v = np.arange(n_v + 1) * (np.pi/n_v) - np.pi / 2
-        a = np.sqrt(R_min ** 2 - z_min ** 2)
-        u = np.arccosh(R_min/a)
-        R = a * np.cosh(u) * np.cos(v) * 0.98
-        z = a * np.sinh(u) * np.sin(v) * 0.98
-
-        indexes = self.index_cylinder(R, z)
-        s = self.data['s'][tuple(indexes)]
-        s_at_boundary = interp1d(v, s)
-
-        x, y = self.data['R'], self.data['z']
-        A2_v = np.sign(y) * np.arccos((np.sqrt((x+a)**2 + y**2) - np.sqrt((x-a)**2 + y**2)) / (2*a))
-
-        s_extrapolation = s_at_boundary(A2_v)
-        extrapolation_mask = ((self.data['R'] / R_min) ** 2 + (self.data['z'] / z_min) ** 2 > 1)
-
-        self.data['s'] = np.where(extrapolation_mask, s_extrapolation, self.data['s']) * J / K / kg
-
-    def extrapolate_pressure(self, R_min, z_min):
-
-        i_R_limit = self.index_cylinder(R_min, 0)[1]
-        i_R_end = self.data['R'].shape[1]
-        i_z_min = self.index_cylinder(0, -z_min)[0]
-        i_z_max = self.index_cylinder(0, +z_min)[0]
-        i_z_end = self.data['R'].shape[0]
-
-        self.data['dR'] = np.roll(self.data['R'], -1, axis=1) - self.data['R']
-        self.data['dz'] = np.roll(self.data['z'], -1, axis=0) - self.data['z']
-
-        self.data['dP_R'] = np.zeros_like(self.data['R'])
-        self.data['dP_z'] = np.zeros_like(self.data['R'])
-
-        def propagate_R(j, i_min, i_max):
-
-            P, S = self.data['P'][i_min:i_max, j], self.data['s'][i_min:i_max, j]
-            R, z = self.data['R'][i_min:i_max, j], self.data['z'][i_min:i_max, j]
-
-            omega = self.snapshot.best_fit_rotation_curve(R)
-            grav = (G * self.snapshot.total_mass) / ((R ** 2 + z ** 2) ** (3 / 2))
-            density, temp = fst.rho_EOS(S.value, P.value) * kg * (m ** -3), fst.T_EOS(S, P)
-
-            self.data['rho'][i_min:i_max, j] = density
-            self.data['T'][i_min:i_max, j] = temp
-            #self.data['c_s'][i_min:i_max, j] = cs_EOS(density, temp)
-            #self.data['u'][i_min:i_max, j] = u_EOS(density, temp)
-
-            dR = self.data['dR'][i_min:i_max, j]
-            dPdR = density * R * (omega ** 2 - grav)
-            dP_R = dPdR * dR
-            new_P = self.data['P'][i_min:i_max, j] + dP_R
-
-            assert(np.any(new_P > 0))
-
-            self.data['P'][i_min:i_max, j + 1] = new_P
-
-        def propagate_z(i, j_min, j_max, reverse):
-            P, S = self.data['P'][i, j_min:j_max], self.data['s'][i, j_min:j_max]
-            R, z = self.data['R'][i, j_min:j_max], self.data['z'][i, j_min:j_max]
-
-            grav = (G * self.snapshot.total_mass) / ((R ** 2 + z ** 2) ** (3 / 2))
-            density, temp = fst.rho_EOS(S, P), fst.T_EOS(S, P)
-
-            self.data['rho'][i, j_min:j_max] = density
-            self.data['T'][i, j_min:j_max] = temp
-            #self.data['c_s'][i, j_min:j_max] = cs_EOS(density, temp)
-            #self.data['u'][i, j_min:j_max] = u_EOS(density, temp)
-
-            dz = self.data['dz'][i, j_min:j_max]
-            dPdz = density * z * (- grav)
-            dP_z = dPdz * dz * (-1 if reverse else +1)
-
-            self.data['P'][i + (-1 if reverse else +1), j_min:j_max] = self.data['P'][i, j_min:j_max] + dP_z
-
-        print('Extrapolating pressure...')
-
-        # extrapolate radially at |z| < z_min
-        print('Stage 1:')
-        for j in tqdm(range(i_R_limit-1, i_R_end-1)):
-            propagate_R(j, i_z_min, i_z_max)
-
-        # extrapolate vertically at R < R_min
-        print('Stage 2:')
-        for i in tqdm(range(i_z_max, i_z_end-1)):
-            propagate_z(i, 0, i_R_limit, False)
-        print('Stage 3:')
-        for i in tqdm(reversed(range(1, i_z_min))):
-            propagate_z(i, 0, i_R_limit, True)
-
-        # extrapolate radially at |z| > z_min
-        print('Stage 4:')
-        for j in tqdm(range(i_R_limit-1, i_R_end-1)):
-            propagate_R(j, 0, i_z_min)
-            propagate_R(j, i_z_max, i_z_end)
-
-        print('Pressure extrapolated')
-
-    def spherical_transform(self):
-
-        n_r, n_theta = 600, 400
-        r = np.linspace(0.1, self.z_size.value * 0.9, num=n_r) * Rearth
-        theta = np.arange(n_theta + 1) * (np.pi/n_theta)
-
-        rs, thetas = np.meshgrid(r, theta)
-        indexes = self.index_polar(rs, thetas)
-
-        for k in self.data.keys():
-            self.data_sphere[k] = self.data[k][tuple(indexes)]
-
-        self.data_sphere['r'] = rs * Rearth
-        self.data_sphere['theta'] = thetas
-
-    def spherical_extrapolation(self):
-
-        def propagate_r(j):
-
-            P, S = self.data['P'][:, j], self.data['s'][:, j]
-            R, z = self.data['R'][:, j], self.data['z'][:, j]
-
-            omega = self.snapshot.best_fit_rotation_curve(R)
-            grav = (G * self.snapshot.total_mass) / ((R ** 2 + z ** 2) ** (3 / 2))
-            density, temp = fst.rho_EOS(S, P), fst.T_EOS(S, P)
-
-            self.data['rho'][:, j] = density
-            self.data['T'][:, j] = temp
-            #self.data['u'][i_min:i_max, j] = u_interpolation(density, temp)
-
-            dR = self.data['dR'][:, j]
-            dPdR = density * R * (omega ** 2 - grav)
-            dP_R = dPdR * dR
-            new_P = self.data['P'][:, j] + dP_R
-
-            assert(np.any(new_P > 0))
-
-            self.data['P'][: j + 1] = new_P
-
-
-units = {
-    'r': m,
-    'R': m,
-    'z': m,
-    'theta': dimensionless,
-    'rho': kg * (m ** -3),
-    'T': K,
-    'P': Pa,
-    'S': J / K / kg,
-    'u': J / kg,
-    'm': kg,
-    'V': m ** 3,
-    'E': J,
-    'h': (m ** 2) / s
-}
-
-
 class photosphere_sph:
 
     # sample size and max size both have units
     def __init__(self, snapshot, sample_size, max_size, resolution, n_theta=100, n_phi=10):
+
+        self.luminosity = None
+        self.phot_indexes = None
+        self.j_phot = None
+        self.L_phot = None
+        self.r_phot = None
+        self.R_phot, self.z_phot = None, None
 
         sample_size.convert_to_units(Rearth)
         self.snapshot = snapshot
@@ -415,7 +94,8 @@ class photosphere_sph:
             rotate_z = rotation_matrix_from_vector([np.cos(phi), np.sin(phi), 0], axis='z')
             rotate_x = rotation_matrix_from_vector([np.cos(phi), np.sin(phi), 0], axis='x')
             matrix = np.matmul(rotate_x, rotate_z)
-            limits = [center[0] - sample_size, center[0] + sample_size, center[1] - sample_size, center[1] + sample_size]
+            limits = [center[0] - sample_size, center[0] + sample_size, center[1] - sample_size,
+                      center[1] + sample_size]
 
             # loads density slice
             mass_slice = slice_gas(snapshot.data,
@@ -477,7 +157,8 @@ class photosphere_sph:
         # extends the data arrays ready for extrapolation
         for k in self.data.keys():
             if k == 'r':
-                self.data[k] = np.pad(self.data[k], ((0, 0), (0, extend_r)), 'linear_ramp', end_values=(0, max_size.value))
+                self.data[k] = np.pad(self.data[k], ((0, 0), (0, extend_r)), 'linear_ramp',
+                                      end_values=(0, max_size.value))
             elif k == 'theta':
                 self.data[k] = np.pad(self.data[k], ((0, 0), (0, extend_r)), 'edge')
             else:
@@ -487,70 +168,108 @@ class photosphere_sph:
         self.data['R'] = self.data['r'] * np.sin(self.data['theta'])
         self.data['z'] = self.data['r'] * np.cos(self.data['theta'])
 
+        self.data['dr'] = np.roll(self.data['r'], -1, axis=1) - self.data['r']
+        self.data['dr'][:, -1] = self.data['dr'][:, -2]
+        self.data['d_theta'] = np.full_like(self.data['dr'], np.pi / n_theta)
+
+        data = self.data
+        r, dr = data['r'], data['dr']
+        theta, d_theta = data['theta'], data['d_theta']
+
+        data['A_r-'] = 2 * pi * (r ** 2) * (cos(theta) - cos(theta + d_theta))
+        data['A_r+'] = 2 * pi * ((r + dr) ** 2) * (cos(theta) - cos(theta + d_theta))
+
+        for j in range(data['r'].shape[1]):
+            r_test = r[0, j]
+            assert (np.sum(data['A_r-'][:, j]) - 4 * pi * (r_test ** 2)) / 4 * pi * (r_test ** 2) < 0.01
+
+        data['A_theta-'] = pi * ((r + dr) ** 2 - r ** 2) * sin(theta)
+        data['A_theta+'] = pi * ((r + dr) ** 2 - r ** 2) * sin(theta + d_theta)
+
+        data['A_theta+'][-1, :] = np.zeros_like(data['A_theta+'][-1, :])
+
+        data['V'] = pi * ((r + dr) ** 2 - r ** 2) * (cos(theta) - cos(theta + d_theta))
+
         # these values are used to calculate the index in the array for a given r and theta
         self.i_per_theta = n_theta / np.pi
         self.i_per_r = self.data['r'].shape[1] / max_size.value
 
         # values used to get the elliptical surface for the start of the extrapolation
         self.R_min, self.z_min = snapshot.HD_limit_R.value * 0.95, snapshot.HD_limit_z.value * 0.95
-        self.linear_eccentricity = np.sqrt(self.R_min ** 2 - self.z_min ** 2) # linear eccentricity of the extrapolation surface
+        self.linear_eccentricity = np.sqrt(
+            self.R_min ** 2 - self.z_min ** 2)  # linear eccentricity of the extrapolation surface
 
         self.central_mass = self.snapshot.total_mass.value
 
+        self.t_dyn = np.sqrt((max_size.value ** 3) / (6.674e-11 * self.central_mass))
+
+        # extrapolation performed here
         self.entropy_extrapolation = self.extrapolate_entropy()
         self.extrapolate_pressure_v2()
+        self.calculate_EOS()
 
         self.data['omega'] = self.data['h'] * (self.data['R'] ** -2)
-
-        # set up values for cooling calc
-        self.data['dr'] = np.roll(self.data['r'], -1, axis=1) - self.data['r']
-        self.data['dr'][:, -1] = self.data['dr'][:, -2]
-        self.data['d_theta'] = np.full_like(self.data['dr'], np.pi / n_theta)
-
-        self.data['A_r-'] = 2 * np.pi * (self.data['r']) ** 2 * \
-                            (np.cos(self.data['theta']) - np.cos(self.data['theta'] + self.data['d_theta']))
-        self.data['A_r+'] = 2 * np.pi * (self.data['r'] + self.data['dr']) ** 2 * \
-                            (np.cos(self.data['theta']) - np.cos(self.data['theta'] + self.data['d_theta']))
-        self.data['A_theta-'] = np.pi * ((self.data['r'] + self.data['dr']) ** 2 -
-                                         (self.data['r']) ** 2) * np.sin(self.data['theta'])
-        self.data['A_theta+'] = np.pi * ((self.data['r'] + self.data['dr']) ** 2 -
-                                         (self.data['r']) ** 2) * np.sin(self.data['theta'] + self.data['d_theta'])
-        self.data['A_theta+'][-1, :] = np.zeros_like(self.data['A_theta+'][-1, :])
-
-
-        self.data['V'] = np.pi * ((self.data['r'] + self.data['dr']) ** 2 - (self.data['r']) ** 2) *\
-                         (np.cos(self.data['theta']) - np.cos(self.data['theta'] + self.data['d_theta']))
 
         self.data['L_r+'] = np.zeros_like(self.data['r'])
         self.data['L_theta-'] = np.zeros_like(self.data['r'])
         self.data['L_theta+'] = np.zeros_like(self.data['r'])
 
-        # self.data['m'] = self.data['rho'] + self.data['V']
-        # self.data['E'] = self.data['u'] * self.data['m']
+        js = np.zeros(r.shape[0])
+        for i in range(r.shape[0]):
+            js[i] = np.nanargmax(self.data['rho'][i, :])[()]
+        ind = np.arange(0, r.shape[0]), np.int32(js)
 
-        self.data['cross_section'] = np.minimum(self.data['alpha_v'] * self.data['V'], self.data['A_r+'])
-        self.data['A_factor'] = self.data['cross_section'] / self.data['A_r+']
+        self.surf_indexes = tuple(ind)
+        self.j_surf = np.int32(js)
 
-        self.data['puff'] = (((5 * 6371000)/ self.data['r']) ** 2) * ((5000/self.data['T']) ** 4)
+        # self.data['cross_section'] = np.minimum(self.data['alpha_v'] * self.data['V'], self.data['A_r+'])
+        # self.data['A_factor'] = self.data['cross_section'] / self.data['A_r+']
 
-        self.data['tau'] = self.data['dr'] * self.data['alpha']
-        self.data['tau_v'] = self.data['dr'] * self.data['alpha_v']
+        # self.data['puff'] = (((5 * 6371000)/ self.data['r']) ** 2) * ((5000/self.data['T']) ** 4)
 
-        self.data['tau_v_2'] = self.data['r'] * self.data['d_theta'] * self.data['alpha_v']
+        # self.data['t_cool'] = self.data['E'] / (self.data['T'] ** 4 * sigma * self.data['A_r+'])
+        #
+        # self.data['tau'] = self.data['dr'] * self.data['alpha']
+        # self.data['tau_v'] = self.data['dr'] * self.data['alpha_v']
+        #
+        # self.data['tau_v_2'] = self.data['r'] * self.data['d_theta'] * self.data['alpha_v']
+        #
+        # plt.imshow(self.data['E'])
+        # plt.show()
 
-        #self.plot('A_factor', log=True, contours=[-1, -0.5, -0.1, 0])
-
-    def plot(self, parameter, log=True, contours=None):
+    def plot(self, parameter, log=True, contours=None, cmap='cubehelix', plot_photosphere=False):
         vals = np.log10(self.data[parameter]) if log else self.data[parameter]
         R, z = self.data['R'] * m, self.data['z'] * m
         R.convert_to_units(Rearth)
         z.convert_to_units(Rearth)
 
-        plt.contourf(R, z, vals, 200, cmap='jet')
-        cbar = plt.colorbar(label=parameter)
+        plt.figure(figsize=(8, 10))
+
+        # min_tick, max_tick = np.floor(np.nanmin(vals)), np.ceil(np.nanmax(vals))
+        # if log:
+        #     if max_tick - min_tick > 20:
+        #         step = 2
+        #     else:
+        #         step = 1
+        #     # ticks = np.arange(min_tick, max_tick, step)
+        # else:
+        #     tick_range = np.nanmax(vals) - np.nanmin(vals)
+        #     tick_interval = 1000
+        #     # ticks = np.arange(np.floor(np.nanmin(vals) / tick_interval) * tick_interval,
+        #     #                   np.ceil(np.nanmax(vals) / tick_interval) * tick_interval + tick_interval,
+        #     #                   tick_interval)
+
+        plt.contourf(R, z, vals, 200, cmap=cmap)
+        cbar = plt.colorbar(label=data_labels[parameter] if not log else '$\log_{10}$[' + data_labels[parameter] + ']')
+        plt.xlabel(data_labels['R'])
+        plt.ylabel(data_labels['z'])
+        #plt.ylim([-10, 10])
+        
+        if plot_photosphere:
+            plt.plot(self.R_phot / 6371000, self.z_phot / 6371000, 'w--')
 
         # theta = np.linspace(0, np.pi)
-        # plt.plot(5 * np.sin(theta), 5 * np.cos(theta), 'w--')
+        # plt.plot(1.5 * np.sin(theta), 1.5 * np.cos(theta), 'w--')
 
         if contours is not None:
             cs = plt.contour(R, z, vals, contours, colors='black', linestyles='dashed')
@@ -570,7 +289,7 @@ class photosphere_sph:
 
     def extrapolate_entropy(self):
 
-        print(f'Extrapolating from R = {self.R_min}, z = {self.z_min}')
+        print(f'Extrapolating from R = {self.R_min / 6371000:.2f}, z = {self.z_min / 6371000:.2f}')
 
         n_v = 400
         v = np.arange(n_v + 1) * (np.pi / n_v) - np.pi / 2
@@ -608,37 +327,10 @@ class photosphere_sph:
 
         result = rho * (gravity + centrifugal)
 
-        if np.any(result == np.NaN):
-            print('WARNING: NaN produced by dP/dr')
+        # if np.isnan(result).any():
+        #     print(f'P = {P} S = {S} rho = {rho}')
 
-        return result
-
-    def extrapolate_pressure_v1(self):
-
-        self.data['dr'] = np.roll(self.data['r'], -1, axis=1) - self.data['r']
-
-        def propagate_r(j):
-
-            P, S = self.data['P'][:, j], self.data['s'][:, j]
-            r, R = self.data['r'][:, j], self.data['R'][:, j]
-
-            omega = self.snapshot.best_fit_rotation_curve(R)
-            gravity = - (G * self.snapshot.total_mass) / (r ** (3 / 2))
-            centrifugal = R * (omega ** 2)
-            density, temp = fst.rho_EOS(S, P), fst.T_EOS(S, P)
-
-            self.data['rho'][:, j] = density
-            self.data['T'][:, j] = temp
-            # self.data['u'][i_min:i_max, j] = u_interpolation(density, temp)
-
-            dr = self.data['dr'][:, j]
-            dPdr = density * (gravity + centrifugal)
-            dP = dPdr * dr
-            new_P = self.data['P'][:, j] + dP
-
-            assert (np.any(new_P > 0))
-
-            self.data['P'][: j + 1] = new_P
+        return np.nan_to_num(result)
 
     def extrapolate_pressure_v2(self):
 
@@ -673,46 +365,123 @@ class photosphere_sph:
             i, j_0 = r[2], r[1]
             self.data['P'][i:i + 1, j_0:] = r[0]
 
-        #         self.data['P'][i:i+1, j_0:] = P_solution.T-
+        #         self.data['P'][i:i+1, j_0:] = P_solution.T
 
         self.data['P'] = np.nan_to_num(self.data['P'])
 
         self.data['rho'] = fst.rho_EOS(self.data['s'], self.data['P'])
         self.data['T'] = fst.T1_EOS(self.data['s'], self.data['P'])
+
+    def calculate_EOS(self):
         self.data['alpha'] = fst.alpha(self.data['rho'], self.data['T'], self.data['P'], self.data['s'])
         self.data['alpha_v'] = fst.alpha(self.data['rho'], self.data['T'], self.data['P'], self.data['s'], D0=0)
+        self.data['tau'] = self.data['alpha'] * self.data['dr']
+        self.data['tau_v'] = self.data['alpha_v'] * self.data['dr']
 
-    def cool(self, dt):
+        self.data['u'] = fst.u_EOS(self.data['rho'], self.data['T'])
+        self.data['m'] = self.data['rho'] * self.data['V']
+        self.data['E'] = self.data['u'] * self.data['m']
+        self.data['rho_E'] = self.data['E'] / self.data['V']
 
-        self.data['L_r+'] = sigma * (self.data['T'] ** 4) * self.data['A_r+']
-        self.data['L_theta-'] = sigma * (self.data['T'] ** 4) * self.data['A_theta-']
-        self.data['L_theta+'] = sigma * (self.data['T'] ** 4) * self.data['A_theta+']
+        self.data['phase'] = fst.phase(self.data['s'], self.data['P'])
 
-        E_out = (self.data['L_r+'] + self.data['L_theta-'] + self.data['L_theta+']) * dt
-        E_in = (shift_right(self.data['L_r+']) + shift_up(self.data['L_theta-']) + shift_down(self.data['L_theta+'])) * dt
-
-        dE = E_in - E_out
-
-        plt.imshow(self.data['T'], cmap='jet')
-        plt.show()
-        plt.imshow(np.sign(dE), cmap='jet')
-        plt.show()
+        emissivity = np.minimum((self.data['alpha_v'] * self.data['V']) / self.data['A_r+'], 1)
+        L = sigma * self.data['T'] ** 4 * self.data['A_r+'] * emissivity
+        self.data['t_cool'] = self.data['E'] / L
 
     def remove_droplets(self):
+        print('Removing droplets...')
+        new_S = fst.S_vapor_curve_v(self.data['P'])
+        self.data['s'] = np.where(self.data['phase'] == 2, new_S, self.data['s'])
+        self.calculate_EOS()
 
-        condensation_mask = fst.phase(self.data['s'], self.data['P']) == 2
-        new_S = np.where(condensation_mask, fst.S_vapor_curve_v(self.data['P']), self.data['s'])
+    def get_photosphere(self):
+        print('Finding photosphere...')
+        
+        @globalize
+        def optical_depth_integration(i):
+            optical_depth = 0
+            j = self.data['r'].shape[1] - 1
 
-        rho_drop = fst.rho_liquid(self.data['P'])
-        rho_gas = fst.rho_vapor(self.data['rho'], self.data['s'], self.data['P'])
-        t_infall = (2 * rho_drop * 1e-3) / (rho_gas * 0.5 * self.data['R'] * self.data['omega'])
+            while optical_depth < 1:
+                tau = self.data['tau_v'][i, j]
+                optical_depth += tau
+                j -= 1
 
-        self.data['s'] = new_S
+            T = self.data['T'][i, j]
+            r = self.data['r'][i, j]
+            L = sigma * T ** 4 * self.data['A_r+'][i, j]
+            
+            return np.int32(i), np.int32(j), T, r, L
+        
+        if __name__ == '__main__':
+            pool = Pool(7)
+            results = pool.map(optical_depth_integration, range(self.data['r'].shape[0]))
 
-    def hydrostatic_equilibrium(self):
+        r_phot = np.zeros(self.data['r'].shape[0])
+        T_phot, L_phot = np.zeros_like(r_phot), np.zeros_like(r_phot)
+        i_phot, j_phot = np.zeros_like(r_phot), np.zeros_like(r_phot)
+        R_phot, z_phot = np.zeros_like(r_phot), np.zeros_like(r_phot)
+
+        for res in results:
+            i, j, T, r, L = res
+            i_phot[i], j_phot[i] = i, j
+            r_phot[i] = r
+            T_phot[i], L_phot[i] = T, L
+            R_phot[i], z_phot[i] = self.data['R'][i, j], self.data['z'][i, j]
+        
+        self.phot_indexes = tuple((i, j))
+        self.luminosity = np.sum(L)
+        self.R_phot, self.z_phot = R_phot, z_phot
+        print(f'Photosphere found with luminosity = {self.luminosity/3.8e26:.2e} L_sun')
+
+    def get_surface(self):
         pass
 
+    def initial_cool_v2(self, tau_threshold=1e-1, max_time=1e-1):
+        print(f'Cooling vapor for {max_time:.2e} s')
+        rho = self.data['rho']
+        T1 = self.data['T']
+        u1 = self.data['u']
+        dr = self.data['dr']
+        m = self.data['m']
+        V = self.data['V']
+        A = self.data['A_r+']
+        alpha = self.data['alpha_v']
 
-snapshot1 = snapshot('snapshots/basic_twin/snapshot_0411.hdf5')
-p2 = photosphere_sph(snapshot1, 12 * Rearth, 25 * Rearth, 100, n_theta=100)
-p2.plot('rho')
+        alpha_threshold = tau_threshold / dr
+
+        T2 = fst.T_alpha_v(rho, alpha_threshold)
+        u2 = fst.u_EOS(rho, T2)
+        du = u1 - u2
+        dE = du / m
+
+        emissivity = np.minimum((alpha * V) / A, 1)
+        L = sigma * T1 ** 4 * A * emissivity
+        t_cool = dE / L
+        cool_check = (alpha > alpha_threshold) & (t_cool < max_time) & (du > 0)
+        T2 = np.where(cool_check, T2, T1)
+        t_cool = np.where(cool_check, t_cool, 0)
+        assert np.all(np.sum(t_cool, axis=1) < max_time)
+
+        self.data['change'] = np.where(cool_check, 1, 0)
+        self.data['T'] = T2
+        self.data['P'] = fst.P_EOS(rho, T2)
+        self.data['s'] = fst.S_EOS(rho, T2)
+        self.calculate_EOS()
+
+
+snapshot1 = snapshot('/home/pavan/PycharmProjects/giant-impact-v2/snapshots/basic_twin/snapshot_0411.hdf5')
+# snapshot2 = snapshot('/home/pavan/Project/Final_Sims/impact_p1.0e+05_M1.0_ratio1.00_v1.10_b0.50_spin0.0/output/snapshot_0240.hdf5')
+# snapshot3 = snapshot('/home/pavan/Project/Final_Sims/impact_p1.0e+05_M0.5_ratio1.00_v1.10_b0.30_spin0.0/output/snapshot_0240.hdf5')
+# *snapshot4 = snapshot('/home/pavan/Project/Final_Sims/impact_p1.0e+05_M0.5_ratio0.50_v1.10_b0.50_spin0.0/output/snapshot_0240.hdf5')
+# *snapshot5 = snapshot('/home/pavan/Project/Final_Sims/impact_p1.0e+05_M0.5_ratio1.00_v1.10_b0.30_spin0.0/output/snapshot_0240.hdf5')
+# snapshot6 = snapshot('/home/pavan/Project/Final_Sims/impact_p1.0e+05_M0.1_ratio1.00_v1.10_b0.50_spin0.0/output/snapshot_0240.hdf5')
+# nsnapshot7 = snapshot('/home/pavan/Project/Final_Sims/impact_p1.0e+05_M0.5_ratio1.00_v1.10_b0.10_spin0.0/output/snapshot_0240.hdf5')
+# snapshot8 = snapshot('/home/pavan/Project/Final_Sims/impact_p1.0e+05_M2.0_ratio1.00_v1.10_b0.50_spin0.0/output/snapshot_0240.hdf5')
+p2 = photosphere_sph(snapshot1, 12 * Rearth, 25 * Rearth, 200, n_theta=48)
+p2.remove_droplets()
+p2.initial_cool_v2(max_time=1, tau_threshold=1e-2)
+p2.remove_droplets()
+p2.get_photosphere()
+p2.plot('t_cool', plot_photosphere=True)

@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 np.set_printoptions(precision=4)
 from scipy.interpolate import RegularGridInterpolator, interp1d
-from scipy.optimize import minimize
+from scipy.optimize import minimize, root
 from multiprocessing import Pool
 
 import sys
@@ -350,8 +350,8 @@ def phase(S, P):
     result = np.zeros_like(P)
     result = np.where(P <= min_P, 0, result)
     result = np.where(np.logical_and(P < P_vapor_curve(S), P > min_P), 2, result)
-    result = np.where(np.logical_and(P > P_vapor_curve(S), S < S_critical_point), 1, result)
-    result = np.where(np.logical_and(P > P_vapor_curve(S), S > S_critical_point), 3, result)
+    result = np.where(np.logical_and(P >= P_vapor_curve(S), S <= S_critical_point), 1, result)
+    result = np.where(np.logical_and(P >= P_vapor_curve(S), S >= S_critical_point), 3, result)
 
     return result
 
@@ -397,7 +397,12 @@ def alpha_v(rho, T):
     rho_n, T_n = 1900, 4150  # kg/m^3, K
     r, t = rho / rho_n, T / T_n
 
-    return B0 * (r ** (1 / 3)) * t * np.exp(-B1 / t) * np.exp(-B2 * (r / t))
+    result = B0 * (r ** (1 / 3)) * t * np.exp(-B1 / t) * np.exp(-B2 * (r / t))
+
+    return np.nan_to_num(result)
+
+
+T3_interp = lambda x: None
 
 
 # calculates the total absorption
@@ -417,22 +422,57 @@ def alpha(rho, T, P, S, D0=1e-3):
     return result
 
 
+def generate_table_alpha_v():
+    global T3_interp
+
+    log_alpha = np.linspace(-20, 10, num=50)
+    log_rho = np.linspace(-5, 1, num=50)
+    x, y = np.meshgrid(log_alpha, log_rho)
+    T_table = np.zeros_like(x)
+
+    for i in range(50):
+        for j in range(50):
+            r = 10 ** y[i, j]
+            a = 10 ** x[i, j]
+            res = root(lambda T: alpha_v(r, T) - a, 3000)
+            if res.success:
+                T_table[i, j] = res.x
+            else:
+                T_table[i, j] = 0
+
+    T3_interp = RegularGridInterpolator((log_alpha, log_rho), T_table, method=method, bounds_error=False, fill_value=np.NaN)
+
+
+generate_table_alpha_v()
+
+
+def T_alpha_v(rho, alpha_v):
+    rho_alpha = make_into_pair_array(np.log10(alpha_v), np.log10(rho))
+    return T3_interp(rho_alpha)
+
+
 # COOLING CALCULATIONS HERE #
 
 def cool(P, S, du, remove_droplets=True):
 
-    rho_1, T_1, P_1, S_1, u_1 = EOS(P=P, S=S, check=True)
+    rho_1, T_1, P_1, S_1, u_1 = EOS(P=P, S=S, check=False)
 
     # cool with constant density
     u_2 = u_1 - du
     rho_2 = rho_1
-    rho_2, T_2, P_2, S_2, u_2 = EOS(u=u_2, rho=rho_2, check=True)
+    rho_2, T_2, P_2, S_2, u_2 = EOS(u=u_2, rho=rho_2, check=False)
 
     # remove droplets
-    if phase(S_2, P_2) == 2 and remove_droplets:
-        P_3 = P_2
-        S_3 = S_vapor_curve_v(P_2)
-        rho_3, T_3, P_3, S_3, u_3 = EOS(S=S_3, P=P_3, check=True)
+    P_3 = P_2
+    S_3 = S_vapor_curve_v(P_2)
+    rho_3, T_3, P_3, S_3, u_3 = EOS(S=S_3, P=P_3, check=False)
+
+    if remove_droplets:
+        rho_3 = np.where(phase == 2, rho_3, rho_2)
+        T_3 = np.where(phase == 2, T_3, T_2)
+        P_3 = np.where(phase == 2, P_3, P_2)
+        S_3 = np.where(phase == 2, S_3, S_2)
+        u_3 = np.where(phase == 2, u_3, u_2)
         return rho_3, T_3, P_3, S_3, u_3
     else:
         return rho_2, T_2, P_2, S_2, u_2
@@ -475,3 +515,4 @@ def cooling_plot(P_1, S_1, du):
     plt.legend()
     plt.yscale('log')
     plt.show()
+

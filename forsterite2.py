@@ -236,7 +236,13 @@ def make_into_pair_array(arr1, arr2):
         if arr2.ndim == 0:
             return np.array([arr1[0], arr2[()]])
 
-        assert np.all(arr1.shape == arr2.shape)
+        try:
+            assert np.all(arr1.shape == arr2.shape)
+        except AssertionError:
+            print(f'arr1 = {arr1} \n arr1 shape = {arr1.shape}')
+            print(f'arr2 = {arr2} \n arr2 shape = {arr2.shape}')
+            assert np.all(arr1.shape == arr2.shape)
+
         assert arr1.ndim == 1 or arr1.ndim == 2
 
         arr = np.array([arr1, arr2])
@@ -294,6 +300,14 @@ def T2_EOS(u, rho):
     return T2_interp(u_rho)
 
 
+# P_EOS = lambda rho, T: P_interp(make_into_pair_array(rho, T))
+# S_EOS = lambda rho, T: S_interp(make_into_pair_array(rho, T))
+# u_EOS = lambda rho, T: u_interp(make_into_pair_array(rho, T))
+# cs_EOS = lambda rho, T: cs_interp(make_into_pair_array(rho, T))
+# T1_EOS = lambda S, P: T_interp(make_into_pair_array(S, np.log10(P)))
+# T2_EOS = lambda u, rho: T2_interp(make_into_pair_array(u, np.log10(rho)))
+
+
 def EOS(rho=None, T=None, P=None, S=None, u=None, check=False):
 
     if rho is not None:
@@ -343,6 +357,10 @@ S_vapor_curve_v = interp1d(NewEOS.vc.Pv, NewEOS.vc.Sv, bounds_error=False, fill_
 rho_vapor_curve_l = interp1d(NewEOS.vc.Pl, NewEOS.vc.rl, bounds_error=False, fill_value=np.NaN)
 
 
+def condensation_S(S, P):
+    return np.where(P < P_critical_point, S_vapor_curve_v(P), S)
+
+
 # 0 : invalid region, 1 : liquid/solid, 2 : liquid vapor mix, 3 : vapor
 def phase(S, P):
     min_P = 1e-5  # pressures below this are invalid
@@ -361,12 +379,23 @@ def vapor_quality(S, P):
     Sl = S_vapor_curve_l(P)
     Sv = S_vapor_curve_v(P)
 
-    result = (S - Sl) / (Sv - Sl)
-    return np.where(phase(S, P) == 2, result, np.NaN)
+    vq = (S - Sl) / (Sv - Sl)
+    p = phase(S, P)
+    result = np.where(p == 2, vq, np.NaN)
+    result = np.where(p == 1, 0, result)
+    result = np.where(p == 3, 1, result)
+    return result
 
 
 def rho_liquid(P):
     return rho_vapor_curve_l(P)
+
+
+def liquid_volume_fraction(rho, P, S):
+    q = vapor_quality(S, P)
+    rho_l = rho_vapor_curve_l(P)
+    lvf = (1 - q) * (rho / rho_l)
+    return lvf
 
 
 def rho_vapor(rho, S, P):

@@ -265,47 +265,12 @@ def make_into_pair_array(arr1, arr2):
         return np.array([arr1, arr2])
 
 
-def P_EOS(rho, T):
-    rhoT = make_into_pair_array(rho, T)
-    return P_interp(rhoT)
-
-
-def S_EOS(rho, T):
-    rhoT = make_into_pair_array(rho, T)
-    return S_interp(rhoT)
-
-
-def u_EOS(rho, T):
-    rhoT = make_into_pair_array(rho, T)
-    return u_interp(rhoT)
-
-
-def cs_EOS(rho, T):
-    rhoT = make_into_pair_array(rho, T)
-    return cs_interp(rhoT)
-
-
-def rho_EOS(S, P):
-    SP = make_into_pair_array(S, np.log10(P))
-    return rho_interp(SP)
-
-
-def T1_EOS(S, P):
-    SP = make_into_pair_array(S, np.log10(P))
-    return T_interp(SP)
-
-
-def T2_EOS(u, rho):
-    u_rho = make_into_pair_array(u, np.log10(rho))
-    return T2_interp(u_rho)
-
-
-# P_EOS = lambda rho, T: P_interp(make_into_pair_array(rho, T))
-# S_EOS = lambda rho, T: S_interp(make_into_pair_array(rho, T))
-# u_EOS = lambda rho, T: u_interp(make_into_pair_array(rho, T))
-# cs_EOS = lambda rho, T: cs_interp(make_into_pair_array(rho, T))
-# T1_EOS = lambda S, P: T_interp(make_into_pair_array(S, np.log10(P)))
-# T2_EOS = lambda u, rho: T2_interp(make_into_pair_array(u, np.log10(rho)))
+P_EOS = lambda rho, T: P_interp(make_into_pair_array(rho, T))
+S_EOS = lambda rho, T: S_interp(make_into_pair_array(rho, T))
+u_EOS = lambda rho, T: u_interp(make_into_pair_array(rho, T))
+cs_EOS = lambda rho, T: cs_interp(make_into_pair_array(rho, T))
+T1_EOS = lambda S, P: T_interp(make_into_pair_array(S, np.log10(P)))
+T2_EOS = lambda u, rho: T2_interp(make_into_pair_array(u, np.log10(rho)))
 
 
 def EOS(rho=None, T=None, P=None, S=None, u=None, check=False):

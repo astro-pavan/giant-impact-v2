@@ -41,7 +41,9 @@ data_labels = {
     "dL": "Luminosity (W)",
     "change": "",
     "tau": "Optical Depth",
-    "tau_v": "Optical Depth"
+    "tau_v": "Optical Depth",
+    "vq": "Vapor quality",
+    "lvf": "Liquid volume fraction"
 }
 
 colormaps = {
@@ -447,9 +449,10 @@ class gas_slice:
         return x_tick_pos, x_tick_label, y_tick_pos, y_tick_label
 
     # plots a heatmap for a certain parameter
-    def plot(self, parameter, show=True, save=None, log=True, threshold=None):
+    def plot(self, parameter, show=True, save=None, log=True, threshold=None, ax=None, colorbar=True):
 
-        fig, ax = plt.subplots()
+        if ax is None:
+            fig, ax = plt.subplots()
         x_tick_pos, x_tick_label, y_tick_pos, y_tick_label = self.ticks()
 
         if threshold is not None:
@@ -459,7 +462,8 @@ class gas_slice:
         else:
             img = ax.imshow(self.data[parameter].value, cmap=colormaps[parameter])
 
-        fig.colorbar(img, label=data_labels[parameter])
+        if colorbar:
+            fig.colorbar(img, label=data_labels[parameter])
 
         ax.set_xticks(x_tick_pos)
         ax.set_xticklabels(x_tick_label)
@@ -475,7 +479,7 @@ class gas_slice:
         if show:
             plt.show()
 
-        plt.close()
+        return ax
 
     # produces a plot of rho, T, P, S
     def full_plot(self, show=True, save=None):

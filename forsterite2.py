@@ -3,6 +3,7 @@
 import uuid
 import matplotlib.pyplot as plt
 import numpy as np
+import woma
 from tqdm import tqdm
 
 np.set_printoptions(precision=4)
@@ -52,14 +53,14 @@ P_critical_point, S_critical_point = NewEOS.cp.P * 1e9, NewEOS.cp.S * 1e6
 
 # EQUATION OF STATE CALCULATIONS HERE #
 
-method = 'cubic'
+method = 'linear'
 u_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.U.T, method=method, bounds_error=False, fill_value=np.NaN)
 P_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.P.T, method=method, bounds_error=False, fill_value=np.NaN)
 S_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.S.T, method=method, bounds_error=False, fill_value=np.NaN)
 cs_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.cs.T, method=method, bounds_error=False, fill_value=np.NaN)
 rho_interp, T_interp = lambda x: np.full_like(x, np.NaN), lambda x: np.full_like(x, np.NaN)
 T2_interp = lambda x: np.full_like(x, np.NaN)
-S_range, log_P_range = [4000, 14000], [1, 10]
+S_range, log_P_range = [2000, 20000], [-2, 11]
 
 
 def globalize(func):
@@ -141,13 +142,18 @@ def generate_table_S_P(load_from_file=False, n=10):
         rho_table, T_table = np.zeros_like(x), np.zeros_like(x)
         error_table = np.zeros_like(x)
 
+        woma.load_eos_tables(['ANEOS_forsterite'])
+        S_woma = lambda rho, T: woma.s_rho_T(rho, T, 400)
+        P_woma = lambda rho, T: woma.P_T_rho(T, rho, 400)
+
         @globalize
         def task(i):
             print(f'Start {i}')
             for j in range(x.shape[1]):
-                rho_table[j, i], T_table[j, i], error_table[j, i] = reverse_EOS_table_X_Y(S_EOS, NewEOS.S, P_EOS, NewEOS.P, x[i, j], 10 ** y[i, j])
+                rho_table[i, j], T_table[i, j], error_table[i, j] = \
+                    reverse_EOS_table_X_Y(S_woma, NewEOS.S, P_woma, NewEOS.P, x[i, j], 10 ** y[i, j])
             print(f'Done {i}')
-            return rho_table[:, i], T_table[:, i], error_table[:, i], i
+            return rho_table[i, :], T_table[i, :], error_table[i, :], i
 
         # fills table values
         print('Generating SP EOS table:')
@@ -157,13 +163,13 @@ def generate_table_S_P(load_from_file=False, n=10):
 
         for r in results:
             i = r[3]
-            rho_table[:, i] = r[0]
-            T_table[:, i] = r[1]
-            error_table[:, i] = r[2]
+            rho_table[i, :] = r[0]
+            T_table[i, :] = r[1]
+            error_table[i, :] = r[2]
 
-        # for i in tqdm(range(x.shape[0])):
-        #     for j in range(x.shape[1]):
-        #         rho_table[j, i], T_table[j, i], error_table[j, i] = reverse_EOS_table_X_Y(S_EOS, NewEOS.S, P_EOS, NewEOS.P, x[i, j], 10 ** y[i, j])
+        plt.contourf(x, y, np.log10(rho_table), 80, cmap='cubehelix')
+        plt.colorbar()
+        plt.show()
 
         np.save(f'EOS_tables/rho_SP_table_n_{n}.npy', rho_table)
         np.save(f'EOS_tables/T_SP_table_n_{n}.npy', T_table)
@@ -172,8 +178,8 @@ def generate_table_S_P(load_from_file=False, n=10):
         plt.colorbar()
         plt.show()
 
-    rho_interp = RegularGridInterpolator((S, logP), rho_table, method=method, bounds_error=False, fill_value=np.NaN)
-    T_interp = RegularGridInterpolator((S, logP), T_table, method=method, bounds_error=False, fill_value=np.NaN)
+    rho_interp = RegularGridInterpolator((S, logP), rho_table.T, method=method, bounds_error=False, fill_value=np.NaN)
+    T_interp = RegularGridInterpolator((S, logP), T_table.T, method=method, bounds_error=False, fill_value=np.NaN)
 
 
 def generate_table_u_rho(load_from_file=False, n=10):
@@ -269,6 +275,7 @@ P_EOS = lambda rho, T: P_interp(make_into_pair_array(rho, T))
 S_EOS = lambda rho, T: S_interp(make_into_pair_array(rho, T))
 u_EOS = lambda rho, T: u_interp(make_into_pair_array(rho, T))
 cs_EOS = lambda rho, T: cs_interp(make_into_pair_array(rho, T))
+rho_EOS = lambda S, P: rho_interp(make_into_pair_array(S, np.log10(P)))
 T1_EOS = lambda S, P: T_interp(make_into_pair_array(S, np.log10(P)))
 T2_EOS = lambda u, rho: T2_interp(make_into_pair_array(u, np.log10(rho)))
 
@@ -309,8 +316,8 @@ def EOS(rho=None, T=None, P=None, S=None, u=None, check=False):
     return rho, T, P, S, u
 
 
-generate_table_u_rho(load_from_file=True, n=80)
-generate_table_S_P(load_from_file=True, n=40)
+generate_table_u_rho(load_from_file=False, n=80)
+generate_table_S_P(load_from_file=False, n=80)
 
 # PHASE CALCULATIONS HERE #
 

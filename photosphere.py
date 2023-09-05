@@ -1,5 +1,5 @@
 # extracts data from a snapshot and analyses it, producing a 2D photosphere model
-
+import matplotlib.colors
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.interpolate import interp1d, RegularGridInterpolator
@@ -8,11 +8,13 @@ from swiftsimio.visualisation.rotation import rotation_matrix_from_vector
 from swiftsimio.visualisation.slice import slice_gas
 from unyt import Rearth, m
 from tqdm import tqdm
-from multiprocessing import Pool
+from multiprocessing import Pool, cpu_count
 import sys, uuid
 
 from snapshot_analysis import snapshot, data_labels
 import forsterite2 as fst
+
+cpus = cpu_count()
 
 sigma = 5.670374419e-8
 L_sun = 3.828e26
@@ -38,11 +40,12 @@ def get_v(R, z, a):
 class photosphere:
 
     # sample size and max size both have units
-    def __init__(self, snapshot, sample_size, max_size, resolution, n_theta=100, n_phi=10):
+    def __init__(self, snapshot, sample_size=12*Rearth, max_size=30*Rearth, resolution=500, n_theta=100, n_phi=10):
 
+        self.L_surf = None
         self.j_surf = None
         self.surf_indexes = None
-        self.luminosity = None
+        self.L_phot = None
         self.phot_indexes = None
         self.j_phot = None
         self.L_phot,self.r_phot = None, None
@@ -183,50 +186,40 @@ class photosphere:
         self.calculate_EOS()
         self.get_surface()
 
-    def plot(self, parameter, log=True, contours=None, cmap='cubehelix', plot_photosphere=False):
+    def plot(self, parameter, log=True, contours=None, cmap='cubehelix', plot_photosphere=False, limits=None):
         vals = np.log10(self.data[parameter]) if log else self.data[parameter]
         R, z = self.data['R'] * m, self.data['z'] * m
         R.convert_to_units(Rearth)
         z.convert_to_units(Rearth)
 
-        plt.figure(figsize=(8, 10))
+        plt.figure(figsize=(10, 8))
 
-        # min_tick, max_tick = np.floor(np.nanmin(vals)), np.ceil(np.nanmax(vals))
         # if log:
-        #     if max_tick - min_tick > 20:
-        #         step = 2
-        #     else:
-        #         step = 1
-        #     # ticks = np.arange(min_tick, max_tick, step)
+        #     val_min, val_max = -5, 3
+        #     plt.contourf(R, z, vals, 200, cmap=cmap, norm=matplotlib.colors.Normalize(vmin=-5, vmax=4))
         # else:
-        #     tick_range = np.nanmax(vals) - np.nanmin(vals)
-        #     tick_interval = 1000
-        #     # ticks = np.arange(np.floor(np.nanmin(vals) / tick_interval) * tick_interval,
-        #     #                   np.ceil(np.nanmax(vals) / tick_interval) * tick_interval + tick_interval,
-        #     #                   tick_interval)
-
         plt.contourf(R, z, vals, 200, cmap=cmap)
+
         cbar = plt.colorbar(label=data_labels[parameter] if not log else '$\log_{10}$[' + data_labels[parameter] + ']')
         plt.xlabel(data_labels['R'])
         plt.ylabel(data_labels['z'])
-        #plt.ylim([-10, 10])
+        if limits is not None:
+            plt.ylim(limits)
         
         if plot_photosphere:
             plt.plot(self.R_phot / 6371000, self.z_phot / 6371000, 'w--')
-            plt.plot(self.R_surf / 6371000, self.z_surf / 6371000, 'k-')
+        plt.plot(self.R_surf / 6371000, self.z_surf / 6371000, 'w-')
+        theta = np.linspace(0, np.pi)
+        plt.plot((self.R_min / 6371000) * np.sin(theta), (self.z_min / 6371000) * np.cos(theta), 'k--')
 
-        # theta = np.linspace(0, np.pi)
-        # plt.plot(1.5 * np.sin(theta), 1.5 * np.cos(theta), 'w--')
+        if log:
+            tick_positions = np.arange(np.ceil(np.nanmin(vals)), np.ceil(np.nanmax(vals)))
+            cbar.set_ticks(tick_positions)
 
         if contours is not None:
             cs = plt.contour(R, z, vals, contours, colors='black', linestyles='dashed')
             plt.clabel(cs, contours, colors='black')
 
-        # vals = np.nan_to_num(vals, posinf=0)
-        #
-        # if log:
-        #     ticks = np.arange(int(np.nanmin(vals)), int(np.nanmax(vals)))
-        #     cbar.set_ticks(ticks)
         plt.show()
 
     def get_index(self, r, theta):
@@ -328,10 +321,9 @@ class photosphere:
             print(u"\u2588", end='')
             return P_solution.T, j_0, i
 
-        if __name__ == '__main__':
-            pool = Pool(7)
-            results = pool.map(extrapolate, range(self.n_theta))
-            print(' DONE')
+        pool = Pool(cpus - 1)
+        results = pool.map(extrapolate, range(self.n_theta))
+        print(' DONE')
 
         for r in results:
             i, j_0 = r[2], r[1]
@@ -395,10 +387,9 @@ class photosphere:
             L = sigma * T ** 4 * self.data['A_r+'][i, j]
             
             return np.int32(i), np.int32(j), T, r, L
-        
-        if __name__ == '__main__':
-            pool = Pool(7)
-            results = pool.map(optical_depth_integration, range(self.n_theta))
+
+        pool = Pool(cpus - 1)
+        results = pool.map(optical_depth_integration, range(self.n_theta))
 
         r_phot = np.zeros(self.n_theta)
         T_phot, L_phot = np.zeros_like(r_phot), np.zeros_like(r_phot)
@@ -416,19 +407,31 @@ class photosphere:
             A_total += self.data['A_r+'][i, j]
 
         self.phot_indexes = tuple((i, j))
-        self.luminosity = np.sum(L_phot)
+        self.L_phot = np.sum(L_phot)
+        self.j_phot = j_phot
         self.R_phot, self.z_phot = R_phot, z_phot
-        print(f'Photosphere found with luminosity = {self.luminosity/3.8e26:.2e} L_sun')
+        print(f'Photosphere found with luminosity = {self.L_phot / 3.8e26:.2e} L_sun')
 
-    def get_surface(self):
+        self.data['shell'] = np.zeros_like(self.data['r'])
+
+        for i in range(self.n_theta):
+            j1 = int(self.j_surf[i])
+            j2 = int(self.j_phot[i])
+            self.data['shell'][i, j1:j2] = 1
+            self.data['shell'][i, j2:] = 2
+
+    def get_surface(self, T_surf=5000):
         js = np.zeros(self.n_theta)
+        A = 0
         for i in range(self.n_theta):
             js[i] = np.int32(np.nanargmax(self.data['rho'][i, :])[()])
             self.R_surf[i] = self.data['R'][i, int(js[i])]
             self.z_surf[i] = self.data['z'][i, int(js[i])]
+            A += self.data['A_r+'][i, int(js[i])]
         ind = np.arange(0, self.n_theta), js
         self.surf_indexes = tuple(ind)
         self.j_surf = js
+        self.L_surf = sigma * T_surf ** 4 * A
 
     def initial_cool(self, tau_threshold=1e-1, max_time=1e2):
         print(f'Cooling vapor for {max_time:.2e} s')
@@ -453,7 +456,6 @@ class photosphere:
         t_cool = dE / L
         cool_check = (alpha > alpha_threshold) & (t_cool < max_time) & (du > 0)
         T2 = np.where(cool_check, T2, T1)
-        t_cool = np.where(cool_check, t_cool, 0)
 
         self.data['change'] = np.where(cool_check, 1, 0)
         self.data['T'] = T2
@@ -461,17 +463,32 @@ class photosphere:
         self.data['s'] = fst.S_EOS(rho, T2)
         self.calculate_EOS()
 
+    def cool_step(self, dt):
+
+        # find the amount of energy in each shell
+
+        planet_mask = self.data['shell'] == 0
+        shell_mask = self.data['shell'] == 1
+        envelope_mask = self.data['shell'] == 2
+
+
+
     def analyse(self, plot_check=False):
         if plot_check:
-            self.plot('rho')
+            self.plot('rho', cmap='magma', limits=[-15, 15])
             self.plot('T', log=False, cmap='coolwarm')
             self.plot('alpha_v')
         self.initial_cool()
         self.remove_droplets()
+        self.hydrostatic_equilibrium(initial_extrapolation=False)
         self.get_photosphere()
         if plot_check:
-            self.plot('T', log=False, cmap='coolwarm', plot_photosphere=True)
+            self.plot('rho', cmap='magma')
+            self.plot('t_cool', plot_photosphere=True)
+            self.plot('alpha', plot_photosphere=True)
 
 
-snapshot1 = snapshot('/home/pavan/PycharmProjects/giant-impact-v2/snapshots/basic_twin/snapshot_0411.hdf5')
-p2 = photosphere(snapshot1, 12 * Rearth, 25 * Rearth, 400, n_theta=20)
+if __name__ == '__main__':
+    snap = snapshot('snapshots/basic_twin/snapshot_0411.hdf5')
+    phot = photosphere(snap, resolution=1000, n_theta=80)
+    phot.analyse(plot_check=True)

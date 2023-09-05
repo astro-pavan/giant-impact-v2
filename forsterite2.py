@@ -316,8 +316,8 @@ def EOS(rho=None, T=None, P=None, S=None, u=None, check=False):
     return rho, T, P, S, u
 
 
-generate_table_u_rho(load_from_file=False, n=80)
-generate_table_S_P(load_from_file=False, n=80)
+generate_table_u_rho(load_from_file=True, n=80)
+generate_table_S_P(load_from_file=True, n=80)
 
 # PHASE CALCULATIONS HERE #
 

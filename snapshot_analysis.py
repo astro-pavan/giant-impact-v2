@@ -43,7 +43,8 @@ data_labels = {
     "tau": "Optical Depth",
     "tau_v": "Optical Depth",
     "vq": "Vapor quality",
-    "lvf": "Liquid volume fraction"
+    "lvf": "Liquid volume fraction",
+    "shell": ""
 }
 
 colormaps = {

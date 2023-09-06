@@ -12,7 +12,7 @@ import sys
 import uuid
 
 from snapshot_analysis import snapshot, data_labels
-import forsterite2 as fst
+import EOS as fst
 
 cpus = cpu_count()
 
@@ -102,6 +102,7 @@ class photosphere:
             temperatures = get_slice('temperatures')
             pressures, entropies = get_slice('pressures'), get_slice('entropy')
             angular_momenta = get_slice('specific_angular_momentum')
+            matids = get_slice('material_ids')
 
             # convert data to MKS
             mass_slice.convert_to_mks()
@@ -116,6 +117,7 @@ class photosphere:
             data['rho'], data['T'] = mass_slice[tuple(indexes)].value, temperatures
             data['P'], data['s'] = pressures, entropies
             data['h'] = angular_momenta
+            data['matid'] = matids
 
             return data
 
@@ -129,6 +131,13 @@ class photosphere:
             for k in self.data.keys():
                 self.data[k] = (i * self.data[k] + vals[k]) / (i + 1)
 
+        # TODO fix iron problem
+
+        # fixes an error with infinite pressure
+        infinite_mask = np.isfinite(self.data['P'])
+        P_fix = fst.P_EOS(self.data['rho'], self.data['T'].value)
+        self.data['P'] = np.where(infinite_mask, self.data['P'], P_fix)
+
         max_size.convert_to_mks()
 
         # extends the data arrays ready for extrapolation
@@ -137,7 +146,8 @@ class photosphere:
                 self.data[k] = np.pad(self.data[k], ((0, 0), (0, extend_r)), 'linear_ramp',
                                       end_values=(0, max_size.value))
             else:
-                self.data[k] = np.pad(self.data[k], ((0, 0), (0, extend_r)), 'edge' if k == 'theta' else 'constant')
+                self.data[k] = np.pad(self.data[k], ((0, 0), (0, extend_r)),
+                                      'edge' if k == 'theta' or k == 'matid' else 'constant')
 
         self.n_r, self.n_theta = self.data['r'].shape[1], self.data['r'].shape[0]
 
@@ -181,7 +191,7 @@ class photosphere:
         self.hydrostatic_equilibrium(initial_extrapolation=True, solve_log=True)
         self.calculate_EOS()
 
-    def plot(self, parameter, log=True, contours=None, cmap='cubehelix', plot_photosphere=False, limits=None):
+    def plot(self, parameter, log=True, contours=None, cmap='cubehelix', plot_photosphere=False, limits=None, round=1000):
         vals = np.log10(self.data[parameter]) if log else self.data[parameter]
         R, z = self.data['R'] * m, self.data['z'] * m
         R.convert_to_units(Rearth)
@@ -204,9 +214,10 @@ class photosphere:
         plt.plot((self.R_min / 6371000) * np.sin(theta), (self.z_min / 6371000) * np.cos(theta), 'k--')
 
         if log:
+            vals = np.where(np.isfinite(vals), vals, np.NaN)
             tick_positions = np.arange(np.ceil(np.nanmin(vals)), np.ceil(np.nanmax(vals)))
         else:
-            tick_positions = np.arange(np.ceil(np.nanmin(vals / 1000)), np.ceil(np.nanmax(vals / 1000))) * 1000
+            tick_positions = np.arange(np.ceil(np.nanmin(vals / round)), np.ceil(np.nanmax(vals / round))) * round
         cbar.set_ticks(tick_positions)
 
         if contours is not None:
@@ -322,12 +333,12 @@ class photosphere:
             i, j_0 = r[2], r[1]
             self.data['P'][i:i + 1, j_0:] = r[0]
 
-        self.data['P'] = np.nan_to_num(self.data['P'])
-
         self.data['rho'] = fst.rho_EOS(self.data['s'], self.data['P'])
         self.data['T'] = fst.T1_EOS(self.data['s'], self.data['P'])
 
     def calculate_EOS(self):
+        iron_mask = self.data['matid'] > 400.8
+
         self.data['alpha'] = fst.alpha(self.data['rho'], self.data['T'], self.data['P'], self.data['s'])
         self.data['alpha_v'] = fst.alpha(self.data['rho'], self.data['T'], self.data['P'], self.data['s'], D0=0)
         self.data['tau'] = self.data['alpha'] * self.data['dr']
@@ -432,7 +443,7 @@ class photosphere:
 
         for i in range(self.n_theta):
 
-            self.j_surf_1[i] = np.nanargmax(self.data['rho'][i, :])
+            self.j_surf_1[i] = np.nanargmax(self.data['phase'][i, :] > 1)
             self.R_surf_1[i] = self.data['R'][i, int(self.j_surf_1[i])]
             self.z_surf_1[i] = self.data['z'][i, int(self.j_surf_1[i])]
 
@@ -454,15 +465,16 @@ class photosphere:
             self.data['shell'][i, j2:j3] = 2
             self.data['shell'][i, j3:] = 3
 
-        inner_mask = self.data['shell'] == 1
-
-        E_outer = np.nansum(self.data['E'][inner_mask])
-        m_outer = np.nansum(self.data['m'][inner_mask])
-        u_outer = E_outer / m_outer
-        self.data['u'][inner_mask] = u_outer
-        self.data['T'][inner_mask] = fst.T2_EOS(self.data['u'][inner_mask], self.data['rho'][inner_mask])
-        self.data['P'][inner_mask] = fst.P_EOS(self.data['rho'][inner_mask], self.data['T'][inner_mask])
-        self.data['s'][inner_mask] = fst.P_EOS(self.data['rho'][inner_mask], self.data['T'][inner_mask])
+        # inner_mask = self.data['shell'] == 1
+        #
+        # E_outer = np.nansum(self.data['E'][inner_mask])
+        # m_outer = np.nansum(self.data['m'][inner_mask])
+        # u_outer = E_outer / m_outer
+        # self.data['u'][inner_mask] = u_outer
+        # self.data['T'][inner_mask] = fst.T2_EOS(self.data['u'][inner_mask], self.data['rho'][inner_mask])
+        # self.data['P'][inner_mask] = fst.P_EOS(self.data['rho'][inner_mask], self.data['T'][inner_mask])
+        # self.data['s'][inner_mask] = fst.P_EOS(self.data['rho'][inner_mask], self.data['T'][inner_mask])
+        # self.calculate_EOS()
 
     def get_shell_area(self, shell_num):
         mask = self.data['shell'] > shell_num
@@ -474,19 +486,16 @@ class photosphere:
 
     def simple_cooling(self):
 
-        outer_planet_mask = self.data['shell'] == 1
-        shell_mask = self.data['shell'] == 2
+        shell = self.data['shell']
 
-        E_shell = np.nansum(self.data['E'][shell_mask])
-        E_outer_planet = np.sum(self.data['E'][outer_planet_mask])
-        E_total = E_shell + E_outer_planet
+        E_shell = np.nansum(self.data['E'][shell == 2])
+        E_outer_planet = np.sum(self.data['E'][shell == 1])
+        E_inner_planet = np.sum(self.data['E'][shell == 0])
+        E_total = E_shell + E_outer_planet + E_inner_planet
 
-        A_inner_planet = self.get_shell_area(0)
-        T_surf_1 = self.data['T'][0, int(self.j_surf_1[0])]
-        L_inner_planet = sigma * T_surf_1 ** 4 * A_inner_planet
-        L_total = self.L_phot - L_inner_planet
+        t_cool = E_total / self.L_phot
 
-        t_cool = E_total / L_total
+        assert not np.isnan(t_cool)
 
         print(f'Estimated cooling time: {t_cool/3.15e7:.3f} yr')
 
@@ -494,24 +503,23 @@ class photosphere:
 
     def cool_step(self, dt):
 
-        # find the amount of energy in envelope and shell
+        shell = self.data['shell']
+        mask = shell < 3
+        m = np.nansum(self.data['m'][mask])
+        E = np.nansum(self.data['E'][mask])
+        dE = self.L_phot * dt
+        u_avg = E / m
+        du = dE / m
 
-        inner_planet_mask = self.data['shell'] == 0
-        outer_planet_mask = self.data['shell'] == 1
-        shell_mask = self.data['shell'] == 2
-        envelope_mask = self.data['shell'] == 3
-        E_shell = np.nansum(np.abs(self.data['E'][shell_mask]))
-        E_envelope = np.sum(self.data['E'][envelope_mask])
+        u1 = np.array(self.data['u'])
+        print(f'Cooling by {du/u_avg:.3%} over {dt/(3600*24):.1f} days')
+        u2 = u1 * (1 - du/u_avg)
+        self.data['u'] = np.where(mask, u2, self.data['u'])
 
-        E_outer = np.nansum(self.data['E'][outer_planet_mask])
-        m_outer = np.nansum(self.data['m'][outer_planet_mask])
-        u_outer = E_outer / m_outer
-        self.data['u'][outer_planet_mask] = u_outer
-        self.data['T'][outer_planet_mask] = fst.T2_EOS(self.data['u'][outer_planet_mask], self.data['rho'][outer_planet_mask])
-        self.data['P'][outer_planet_mask] = fst.P_EOS(self.data['rho'][outer_planet_mask], self.data['T'][outer_planet_mask])
-        self.data['s'][outer_planet_mask] = fst.P_EOS(self.data['rho'][outer_planet_mask], self.data['T'][outer_planet_mask])
-
-        t_shell = E_shell / self.L_phot
+        self.data['T'] = fst.T2_EOS(self.data['u'], self.data['rho'])
+        self.data['P'] = fst.P_EOS(self.data['rho'], self.data['T'])
+        self.data['S'] = fst.S_EOS(self.data['rho'], self.data['T'])
+        self.calculate_EOS()
 
     def analyse(self, plot_check=False):
         if plot_check:
@@ -534,6 +542,14 @@ if __name__ == '__main__':
     phot.analyse(plot_check=False)
     phot.set_up_cooling_shells()
     phot.simple_cooling()
-    phot.plot('rho', cmap='magma', plot_photosphere=True)
-    phot.plot('T', cmap='inferno', log=False)
+    phot.plot('T', log=False, cmap='inferno', plot_photosphere=True)
+    phot.cool_step(4*yr)
+    phot.simple_cooling()
+    phot.get_photosphere()
+    #phot.plot('T', log=False, cmap='inferno', plot_photosphere=True)
+    phot.plot('alpha_v', log=True, cmap='inferno', plot_photosphere=True)
 
+
+# stuff to do:
+# - Check rho vals
+# - set up cooling steps

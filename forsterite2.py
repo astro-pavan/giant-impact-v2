@@ -60,7 +60,7 @@ S_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.S.T, method=me
 cs_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.cs.T, method=method, bounds_error=False, fill_value=np.NaN)
 rho_interp, T_interp = lambda x: np.full_like(x, np.NaN), lambda x: np.full_like(x, np.NaN)
 T2_interp = lambda x: np.full_like(x, np.NaN)
-S_range, log_P_range = [2000, 20000], [-2, 11]
+S_range, log_P_range = [2000, 20000], [-2, 13]
 
 
 def globalize(func):
@@ -317,7 +317,7 @@ def EOS(rho=None, T=None, P=None, S=None, u=None, check=False):
 
 
 generate_table_u_rho(load_from_file=True, n=80)
-generate_table_S_P(load_from_file=True, n=80)
+generate_table_S_P(load_from_file=True, n=100)
 
 # PHASE CALCULATIONS HERE #
 
@@ -333,15 +333,16 @@ def condensation_S(S, P):
     return np.where(P < P_critical_point, S_vapor_curve_v(P), S)
 
 
-# 0 : invalid region, 1 : liquid/solid, 2 : liquid vapor mix, 3 : vapor
+# 0 : invalid region, 1 : liquid/solid, 2 : liquid vapor mix, 3 : vapor, 4 : supercritical
 def phase(S, P):
     min_P = 1e-5  # pressures below this are invalid
 
     result = np.zeros_like(P)
     result = np.where(P <= min_P, 0, result)
     result = np.where(np.logical_and(P < P_vapor_curve(S), P > min_P), 2, result)
-    result = np.where(np.logical_and(P >= P_vapor_curve(S), S <= S_critical_point), 1, result)
+    result = np.where(np.logical_and(P >= P_vapor_curve(S), S < S_critical_point), 1, result)
     result = np.where(np.logical_and(P >= P_vapor_curve(S), S >= S_critical_point), 3, result)
+    result = np.where(np.logical_and(result == 3, P >= P_critical_point), 4, result)
 
     return result
 

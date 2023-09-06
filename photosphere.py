@@ -1,15 +1,15 @@
 # extracts data from a snapshot and analyses it, producing a 2D photosphere model
-import matplotlib.colors
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.interpolate import interp1d, RegularGridInterpolator
-from scipy.integrate import odeint, solve_ivp
+from scipy.integrate import odeint
 from swiftsimio.visualisation.rotation import rotation_matrix_from_vector
 from swiftsimio.visualisation.slice import slice_gas
 from unyt import Rearth, m
 from tqdm import tqdm
 from multiprocessing import Pool, cpu_count
-import sys, uuid
+import sys
+import uuid
 
 from snapshot_analysis import snapshot, data_labels
 import forsterite2 as fst
@@ -18,6 +18,7 @@ cpus = cpu_count()
 
 sigma = 5.670374419e-8
 L_sun = 3.828e26
+yr = 3.15e7
 pi = np.pi
 cos = lambda theta: np.cos(theta)
 sin = lambda theta: np.sin(theta)
@@ -197,8 +198,8 @@ class photosphere:
         
         if plot_photosphere:
             plt.plot(self.R_phot / 6371000, self.z_phot / 6371000, 'w--')
-        plt.plot(self.R_surf_1 / 6371000, self.z_surf_1 / 6371000, 'r-')
-        plt.plot(self.R_surf_2 / 6371000, self.z_surf_2 / 6371000, 'b-')
+        plt.plot(self.R_surf_1 / 6371000, self.z_surf_1 / 6371000, 'r--')
+        plt.plot(self.R_surf_2 / 6371000, self.z_surf_2 / 6371000, 'b--')
         theta = np.linspace(0, np.pi)
         plt.plot((self.R_min / 6371000) * np.sin(theta), (self.z_min / 6371000) * np.cos(theta), 'k--')
 
@@ -463,15 +464,33 @@ class photosphere:
         self.data['P'][inner_mask] = fst.P_EOS(self.data['rho'][inner_mask], self.data['T'][inner_mask])
         self.data['s'][inner_mask] = fst.P_EOS(self.data['rho'][inner_mask], self.data['T'][inner_mask])
 
-        T_surf_1 = self.data['T'][0, int(self.j_surf_1[0])]
-        T_surf_2 = self.data['T'][0, int(self.j_surf_2[0]) - 1]
-
-        print(T_surf_1)
-        print(T_surf_2)
+    def get_shell_area(self, shell_num):
+        mask = self.data['shell'] > shell_num
+        A = 0
+        for i in range(self.n_theta):
+            j = np.argmax(mask[i, :])
+            A += self.data['A_r+'][i, int(j)]
+        return A
 
     def simple_cooling(self):
 
-        pass
+        outer_planet_mask = self.data['shell'] == 1
+        shell_mask = self.data['shell'] == 2
+
+        E_shell = np.nansum(self.data['E'][shell_mask])
+        E_outer_planet = np.sum(self.data['E'][outer_planet_mask])
+        E_total = E_shell + E_outer_planet
+
+        A_inner_planet = self.get_shell_area(0)
+        T_surf_1 = self.data['T'][0, int(self.j_surf_1[0])]
+        L_inner_planet = sigma * T_surf_1 ** 4 * A_inner_planet
+        L_total = self.L_phot - L_inner_planet
+
+        t_cool = E_total / L_total
+
+        print(f'Estimated cooling time: {t_cool/3.15e7:.3f} yr')
+
+        return t_cool
 
     def cool_step(self, dt):
 
@@ -514,6 +533,7 @@ if __name__ == '__main__':
     phot = photosphere(snap, resolution=1000, n_theta=80)
     phot.analyse(plot_check=False)
     phot.set_up_cooling_shells()
+    phot.simple_cooling()
     phot.plot('rho', cmap='magma', plot_photosphere=True)
     phot.plot('T', cmap='inferno', log=False)
 

@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 from snapshot_analysis import snapshot, gas_slice, data_labels
 from photosphere import photosphere
-import forsterite2 as fst
+import EOS as fst
 
 Mearth = 5.972e24
 

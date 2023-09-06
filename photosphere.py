@@ -42,14 +42,11 @@ class photosphere:
     # sample size and max size both have units
     def __init__(self, snapshot, sample_size=12*Rearth, max_size=30*Rearth, resolution=500, n_theta=100, n_phi=10):
 
-        self.L_surf = None
-        self.j_surf = None
-        self.surf_indexes = None
-        self.L_phot = None
-        self.phot_indexes = None
-        self.j_phot = None
-        self.L_phot,self.r_phot = None, None
-        self.R_phot, self.z_phot = None, None
+        self.j_surf_1, self.j_surf_2, self.j_phot = np.zeros(n_theta + 1), np.zeros(n_theta + 1), np.zeros(n_theta + 1)
+        self.L_surf_1, self.L_surf_2, self.L_phot = 0, 0, 0
+        self.R_phot, self.z_phot = np.zeros(n_theta + 1), np.zeros(n_theta + 1)
+        self.R_surf_1, self.z_surf_1 = np.zeros(n_theta + 1), np.zeros(n_theta + 1)
+        self.R_surf_2, self.z_surf_2 = np.zeros(n_theta + 1), np.zeros(n_theta + 1)
 
         sample_size.convert_to_units(Rearth)
         self.snapshot = snapshot
@@ -142,8 +139,6 @@ class photosphere:
                 self.data[k] = np.pad(self.data[k], ((0, 0), (0, extend_r)), 'edge' if k == 'theta' else 'constant')
 
         self.n_r, self.n_theta = self.data['r'].shape[1], self.data['r'].shape[0]
-        self.R_phot, self.z_phot = np.zeros(self.n_theta), np.zeros(self.n_theta)
-        self.R_surf, self.z_surf = np.zeros(self.n_theta), np.zeros(self.n_theta)
 
         # calculates the R and z coordinates for each point
         self.data['R'] = self.data['r'] * np.sin(self.data['theta'])
@@ -165,7 +160,7 @@ class photosphere:
 
         data['A_theta+'][-1, :] = np.zeros_like(data['A_theta+'][-1, :])
 
-        data['V'] = pi * ((r + dr) ** 2 - r ** 2) * (cos(theta) - cos(theta + d_theta))
+        data['V'] = (1/3) * pi * ((r + dr) ** 3 - r ** 3) * (cos(theta) - cos(theta + d_theta))
 
         # these values are used to calculate the index in the array for a given r and theta
         self.i_per_theta = n_theta / np.pi
@@ -184,7 +179,6 @@ class photosphere:
         self.entropy_extrapolation = self.extrapolate_entropy()
         self.hydrostatic_equilibrium(initial_extrapolation=True, solve_log=True)
         self.calculate_EOS()
-        self.get_surface()
 
     def plot(self, parameter, log=True, contours=None, cmap='cubehelix', plot_photosphere=False, limits=None):
         vals = np.log10(self.data[parameter]) if log else self.data[parameter]
@@ -193,11 +187,6 @@ class photosphere:
         z.convert_to_units(Rearth)
 
         plt.figure(figsize=(10, 8))
-
-        # if log:
-        #     val_min, val_max = -5, 3
-        #     plt.contourf(R, z, vals, 200, cmap=cmap, norm=matplotlib.colors.Normalize(vmin=-5, vmax=4))
-        # else:
         plt.contourf(R, z, vals, 200, cmap=cmap)
 
         cbar = plt.colorbar(label=data_labels[parameter] if not log else '$\log_{10}$[' + data_labels[parameter] + ']')
@@ -208,13 +197,16 @@ class photosphere:
         
         if plot_photosphere:
             plt.plot(self.R_phot / 6371000, self.z_phot / 6371000, 'w--')
-        plt.plot(self.R_surf / 6371000, self.z_surf / 6371000, 'w-')
+        plt.plot(self.R_surf_1 / 6371000, self.z_surf_1 / 6371000, 'r-')
+        plt.plot(self.R_surf_2 / 6371000, self.z_surf_2 / 6371000, 'b-')
         theta = np.linspace(0, np.pi)
         plt.plot((self.R_min / 6371000) * np.sin(theta), (self.z_min / 6371000) * np.cos(theta), 'k--')
 
         if log:
             tick_positions = np.arange(np.ceil(np.nanmin(vals)), np.ceil(np.nanmax(vals)))
-            cbar.set_ticks(tick_positions)
+        else:
+            tick_positions = np.arange(np.ceil(np.nanmin(vals / 1000)), np.ceil(np.nanmax(vals / 1000))) * 1000
+        cbar.set_ticks(tick_positions)
 
         if contours is not None:
             cs = plt.contour(R, z, vals, contours, colors='black', linestyles='dashed')
@@ -406,42 +398,17 @@ class photosphere:
             R_phot[i], z_phot[i] = self.data['R'][i, j], self.data['z'][i, j]
             A_total += self.data['A_r+'][i, j]
 
-        self.phot_indexes = tuple((i, j))
         self.L_phot = np.sum(L_phot)
         self.j_phot = j_phot
         self.R_phot, self.z_phot = R_phot, z_phot
         print(f'Photosphere found with luminosity = {self.L_phot / 3.8e26:.2e} L_sun')
 
-        self.data['shell'] = np.zeros_like(self.data['r'])
-
-        for i in range(self.n_theta):
-            j1 = int(self.j_surf[i])
-            j2 = int(self.j_phot[i])
-            self.data['shell'][i, j1:j2] = 1
-            self.data['shell'][i, j2:] = 2
-
-    def get_surface(self, T_surf=5000):
-        js = np.zeros(self.n_theta)
-        A = 0
-        for i in range(self.n_theta):
-            js[i] = np.int32(np.nanargmax(self.data['rho'][i, :])[()])
-            self.R_surf[i] = self.data['R'][i, int(js[i])]
-            self.z_surf[i] = self.data['z'][i, int(js[i])]
-            A += self.data['A_r+'][i, int(js[i])]
-        ind = np.arange(0, self.n_theta), js
-        self.surf_indexes = tuple(ind)
-        self.j_surf = js
-        self.L_surf = sigma * T_surf ** 4 * A
-
     def initial_cool(self, tau_threshold=1e-1, max_time=1e2):
         print(f'Cooling vapor for {max_time:.2e} s')
-        rho = self.data['rho']
-        T1 = self.data['T']
-        u1 = self.data['u']
+        rho, T1, u1 = self.data['rho'], self.data['T'], self.data['u']
         dr = self.data['dr']
         m = self.data['m']
-        V = self.data['V']
-        A = self.data['A_r+']
+        A, V = self.data['A_r+'], self.data['V']
         alpha = self.data['alpha_v']
 
         alpha_threshold = tau_threshold / dr
@@ -461,17 +428,71 @@ class photosphere:
         self.data['T'] = T2
         self.data['P'] = fst.P_EOS(rho, T2)
         self.data['s'] = fst.S_EOS(rho, T2)
+
+        for i in range(self.n_theta):
+
+            self.j_surf_1[i] = np.nanargmax(self.data['rho'][i, :])
+            self.R_surf_1[i] = self.data['R'][i, int(self.j_surf_1[i])]
+            self.z_surf_1[i] = self.data['z'][i, int(self.j_surf_1[i])]
+
+            self.j_surf_2[i] = np.nanargmax(self.data['change'][i, :])
+            self.R_surf_2[i] = self.data['R'][i, int(self.j_surf_2[i])]
+            self.z_surf_2[i] = self.data['z'][i, int(self.j_surf_2[i])]
+
         self.calculate_EOS()
+
+    def set_up_cooling_shells(self):
+
+        self.data['shell'] = np.zeros_like(self.data['r'])
+
+        for i in range(self.n_theta):
+            j1 = int(self.j_surf_1[i])
+            j2 = int(self.j_surf_2[i])
+            j3 = int(self.j_phot[i])
+            self.data['shell'][i, j1:j2] = 1
+            self.data['shell'][i, j2:j3] = 2
+            self.data['shell'][i, j3:] = 3
+
+        inner_mask = self.data['shell'] == 1
+
+        E_outer = np.nansum(self.data['E'][inner_mask])
+        m_outer = np.nansum(self.data['m'][inner_mask])
+        u_outer = E_outer / m_outer
+        self.data['u'][inner_mask] = u_outer
+        self.data['T'][inner_mask] = fst.T2_EOS(self.data['u'][inner_mask], self.data['rho'][inner_mask])
+        self.data['P'][inner_mask] = fst.P_EOS(self.data['rho'][inner_mask], self.data['T'][inner_mask])
+        self.data['s'][inner_mask] = fst.P_EOS(self.data['rho'][inner_mask], self.data['T'][inner_mask])
+
+        T_surf_1 = self.data['T'][0, int(self.j_surf_1[0])]
+        T_surf_2 = self.data['T'][0, int(self.j_surf_2[0]) - 1]
+
+        print(T_surf_1)
+        print(T_surf_2)
+
+    def simple_cooling(self):
+
+        pass
 
     def cool_step(self, dt):
 
-        # find the amount of energy in each shell
+        # find the amount of energy in envelope and shell
 
-        planet_mask = self.data['shell'] == 0
-        shell_mask = self.data['shell'] == 1
-        envelope_mask = self.data['shell'] == 2
+        inner_planet_mask = self.data['shell'] == 0
+        outer_planet_mask = self.data['shell'] == 1
+        shell_mask = self.data['shell'] == 2
+        envelope_mask = self.data['shell'] == 3
+        E_shell = np.nansum(np.abs(self.data['E'][shell_mask]))
+        E_envelope = np.sum(self.data['E'][envelope_mask])
 
+        E_outer = np.nansum(self.data['E'][outer_planet_mask])
+        m_outer = np.nansum(self.data['m'][outer_planet_mask])
+        u_outer = E_outer / m_outer
+        self.data['u'][outer_planet_mask] = u_outer
+        self.data['T'][outer_planet_mask] = fst.T2_EOS(self.data['u'][outer_planet_mask], self.data['rho'][outer_planet_mask])
+        self.data['P'][outer_planet_mask] = fst.P_EOS(self.data['rho'][outer_planet_mask], self.data['T'][outer_planet_mask])
+        self.data['s'][outer_planet_mask] = fst.P_EOS(self.data['rho'][outer_planet_mask], self.data['T'][outer_planet_mask])
 
+        t_shell = E_shell / self.L_phot
 
     def analyse(self, plot_check=False):
         if plot_check:
@@ -480,7 +501,7 @@ class photosphere:
             self.plot('alpha_v')
         self.initial_cool()
         self.remove_droplets()
-        self.hydrostatic_equilibrium(initial_extrapolation=False)
+        # self.hydrostatic_equilibrium(initial_extrapolation=False)
         self.get_photosphere()
         if plot_check:
             self.plot('rho', cmap='magma')
@@ -491,4 +512,8 @@ class photosphere:
 if __name__ == '__main__':
     snap = snapshot('snapshots/basic_twin/snapshot_0411.hdf5')
     phot = photosphere(snap, resolution=1000, n_theta=80)
-    phot.analyse(plot_check=True)
+    phot.analyse(plot_check=False)
+    phot.set_up_cooling_shells()
+    phot.plot('rho', cmap='magma', plot_photosphere=True)
+    phot.plot('T', cmap='inferno', log=False)
+

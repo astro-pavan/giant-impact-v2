@@ -19,6 +19,7 @@ cpus = cpu_count()
 sigma = 5.670374419e-8
 L_sun = 3.828e26
 yr = 3.15e7
+day = 3600 * 24
 pi = np.pi
 cos = lambda theta: np.cos(theta)
 sin = lambda theta: np.sin(theta)
@@ -41,7 +42,7 @@ def get_v(R, z, a):
 class photosphere:
 
     # sample size and max size both have units
-    def __init__(self, snapshot, sample_size=12*Rearth, max_size=30*Rearth, resolution=500, n_theta=100, n_phi=10):
+    def __init__(self, snapshot, sample_size=12*Rearth, max_size=40*Rearth, resolution=500, n_theta=100, n_phi=10):
 
         self.j_surf_1, self.j_surf_2, self.j_phot = np.zeros(n_theta + 1), np.zeros(n_theta + 1), np.zeros(n_theta + 1)
         self.L_surf_1, self.L_surf_2, self.L_phot = 0, 0, 0
@@ -191,7 +192,7 @@ class photosphere:
         self.hydrostatic_equilibrium(initial_extrapolation=True, solve_log=True)
         self.calculate_EOS()
 
-    def plot(self, parameter, log=True, contours=None, cmap='cubehelix', plot_photosphere=False, limits=None, round=1000):
+    def plot(self, parameter, log=True, contours=None, cmap='turbo', plot_photosphere=False, limits=None, round_to=1):
         vals = np.log10(self.data[parameter]) if log else self.data[parameter]
         R, z = self.data['R'] * m, self.data['z'] * m
         R.convert_to_units(Rearth)
@@ -207,17 +208,14 @@ class photosphere:
             plt.ylim(limits)
         
         if plot_photosphere:
-            plt.plot(self.R_phot / 6371000, self.z_phot / 6371000, 'w--')
-        plt.plot(self.R_surf_1 / 6371000, self.z_surf_1 / 6371000, 'r--')
+            plt.plot(self.R_phot / 6371000, self.z_phot / 6371000, 'r--')
+        plt.plot(self.R_surf_1 / 6371000, self.z_surf_1 / 6371000, 'g--')
         plt.plot(self.R_surf_2 / 6371000, self.z_surf_2 / 6371000, 'b--')
         theta = np.linspace(0, np.pi)
         plt.plot((self.R_min / 6371000) * np.sin(theta), (self.z_min / 6371000) * np.cos(theta), 'k--')
 
-        if log:
-            vals = np.where(np.isfinite(vals), vals, np.NaN)
-            tick_positions = np.arange(np.ceil(np.nanmin(vals)), np.ceil(np.nanmax(vals)))
-        else:
-            tick_positions = np.arange(np.ceil(np.nanmin(vals / round)), np.ceil(np.nanmax(vals / round))) * round
+        vals = np.where(np.isfinite(vals), vals, np.NaN)
+        tick_positions = np.arange(np.ceil(np.nanmin(vals / round_to)), np.ceil(np.nanmax(vals / round_to))) * round_to
         cbar.set_ticks(tick_positions)
 
         if contours is not None:
@@ -415,7 +413,7 @@ class photosphere:
         self.R_phot, self.z_phot = R_phot, z_phot
         print(f'Photosphere found with luminosity = {self.L_phot / 3.8e26:.2e} L_sun')
 
-    def initial_cool(self, tau_threshold=1e-1, max_time=1e2):
+    def initial_cool(self, tau_threshold=1e-1, max_time=1e1):
         print(f'Cooling vapor for {max_time:.2e} s')
         rho, T1, u1 = self.data['rho'], self.data['T'], self.data['u']
         dr = self.data['dr']
@@ -433,7 +431,7 @@ class photosphere:
         emissivity = np.minimum((alpha * V) / A, 1)
         L = sigma * T1 ** 4 * A * emissivity
         t_cool = dE / L
-        cool_check = (alpha > alpha_threshold) & (t_cool < max_time) & (du > 0)
+        cool_check = (alpha > alpha_threshold) & (t_cool < max_time) & (T2 < T1)
         T2 = np.where(cool_check, T2, T1)
 
         self.data['change'] = np.where(cool_check, 1, 0)
@@ -481,6 +479,7 @@ class photosphere:
         A = 0
         for i in range(self.n_theta):
             j = np.argmax(mask[i, :])
+            j = self.n_r - 1 if j == 0 else j
             A += self.data['A_r+'][i, int(j)]
         return A
 
@@ -503,30 +502,65 @@ class photosphere:
 
     def cool_step(self, dt):
 
-        shell = self.data['shell']
-        mask = shell < 3
-        m = np.nansum(self.data['m'][mask])
-        E = np.nansum(self.data['E'][mask])
-        dE = self.L_phot * dt
-        u_avg = E / m
-        du = dE / m
+        phot_mask = self.data['shell'] < 3
 
-        u1 = np.array(self.data['u'])
-        print(f'Cooling by {du/u_avg:.3%} over {dt/(3600*24):.1f} days')
-        u2 = u1 * (1 - du/u_avg)
-        self.data['u'] = np.where(mask, u2, self.data['u'])
+        # cool inner region
 
+        m_in = np.nansum(self.data['m'][phot_mask])
+        E_in = np.nansum(self.data['E'][phot_mask])
+        dE_in = self.L_phot * dt
+        u_avg_in = E_in / m_in
+        du_in = dE_in / m_in
+        u2_in = self.data['u'] * (1 - du_in / u_avg_in)
+
+        print(f'Cooling by {du_in/u_avg_in:.3%} over {dt/(3600*24):.1f} days')
+
+        # cool outer region
+        m_out = np.nansum(self.data['m'][~phot_mask])
+        E_out = np.nansum(self.data['E'][~phot_mask])
+        dE_out = np.nansum((self.data['alpha_v'] * self.data['V'] * sigma * self.data['T'] ** 4 * dt)[~phot_mask])
+        u_avg_out = E_out / m_out
+        du_out = dE_out / m_out
+        u2_out = self.data['u']
+
+        emissivity = self.data['alpha_v'] * self.data['V'] / self.data['A_r+']
+
+        # u2_out = self.data['u'] - du_out
+        # u2_out = np.where(u2_out <= 0, 2e5, u2_out)
+
+        self.data['u'] = np.where(phot_mask, u2_in, u2_out)
         self.data['T'] = fst.T2_EOS(self.data['u'], self.data['rho'])
         self.data['P'] = fst.P_EOS(self.data['rho'], self.data['T'])
         self.data['S'] = fst.S_EOS(self.data['rho'], self.data['T'])
         self.calculate_EOS()
+
+    def correction(self):
+
+        correction_mask = (self.data['t_cool'] < 1e5) & (self.data['shell'] == 3)
+        tau = self.data['tau_v'][correction_mask]
+        alpha_threshold = 1e-2 / self.data['dr']
+        T1 = self.data['T']
+        T2 = fst.T_alpha_v(self.data['rho'], alpha_threshold)
+        self.data['T'] = np.where(correction_mask, T2, T1)
+        #
+        # self.data['test'] = correction_mask * 1
+        # self.plot('test', log=False, cmap='cubehelix')
+
+        self.data['P'] = fst.P_EOS(self.data['rho'], self.data['T'])
+        self.data['s'] = fst.S_EOS(self.data['rho'], self.data['T'])
+
+        self.calculate_EOS()
+
+        # correction_mask = (self.data['t_cool'] < 1e5)
+        # self.data['test'] = correction_mask * 1
+        # self.plot('test', log=False, cmap='cubehelix')
 
     def analyse(self, plot_check=False):
         if plot_check:
             self.plot('rho', cmap='magma', limits=[-15, 15])
             self.plot('T', log=False, cmap='coolwarm')
             self.plot('alpha_v')
-        self.initial_cool()
+        self.initial_cool(max_time=1e2)
         self.remove_droplets()
         # self.hydrostatic_equilibrium(initial_extrapolation=False)
         self.get_photosphere()
@@ -538,18 +572,13 @@ class photosphere:
 
 if __name__ == '__main__':
     snap = snapshot('snapshots/basic_twin/snapshot_0411.hdf5')
-    phot = photosphere(snap, resolution=1000, n_theta=80)
+    phot = photosphere(snap, resolution=500, n_theta=80)
     phot.analyse(plot_check=False)
     phot.set_up_cooling_shells()
-    phot.simple_cooling()
-    phot.plot('T', log=False, cmap='inferno', plot_photosphere=True)
-    phot.cool_step(4*yr)
-    phot.simple_cooling()
+    phot.correction()
     phot.get_photosphere()
-    #phot.plot('T', log=False, cmap='inferno', plot_photosphere=True)
-    phot.plot('alpha_v', log=True, cmap='inferno', plot_photosphere=True)
+    phot.cool_step(5e5)
+    phot.get_photosphere()
 
-
-# stuff to do:
-# - Check rho vals
-# - set up cooling steps
+    phot.plot('tau_v', log=True, plot_photosphere=True, round_to=1)
+    phot.plot('t_cool', log=True, plot_photosphere=True, round_to=1)

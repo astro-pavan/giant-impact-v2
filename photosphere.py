@@ -434,6 +434,13 @@ class photosphere:
         cool_check = (alpha > alpha_threshold) & (t_cool < max_time) & (T2 < T1)
         T2 = np.where(cool_check, T2, T1)
 
+        x = np.zeros_like(L)
+        x = np.where((alpha > alpha_threshold) & (t_cool < max_time), 3, x)
+        x = np.where((alpha > alpha_threshold) & ~(t_cool < max_time), 2, x)
+        x = np.where(~(alpha > alpha_threshold) & (t_cool < max_time), 1, x)
+        self.data['test'] = x
+        self.plot('test', log=False)
+
         self.data['change'] = np.where(cool_check, 1, 0)
         self.data['T'] = T2
         self.data['P'] = fst.P_EOS(rho, T2)
@@ -450,6 +457,21 @@ class photosphere:
             self.z_surf_2[i] = self.data['z'][i, int(self.j_surf_2[i])]
 
         self.calculate_EOS()
+
+    def initial_cool_v2(self, max_time):
+        u1, rho = self.data['u'], self.data['rho']
+        t_cool = self.data['t_cool']
+        k = np.minimum(max_time / t_cool, 0.9)
+        du = k * u1
+        u2 = u1 - du
+        T2 = fst.T2_EOS(u2, rho)
+
+        self.data['T'] = T2
+        self.data['P'] = fst.P_EOS(rho, T2)
+        self.data['s'] = fst.S_EOS(rho, T2)
+        self.calculate_EOS()
+
+        print(np.nanmin(self.data['t_cool']))
 
     def set_up_cooling_shells(self):
 
@@ -560,10 +582,15 @@ class photosphere:
             self.plot('rho', cmap='magma', limits=[-15, 15])
             self.plot('T', log=False, cmap='coolwarm')
             self.plot('alpha_v')
-        self.initial_cool(max_time=1e2)
+
+        self.initial_cool_v2(1e0)
+        self.initial_cool_v2(1e1)
+        self.initial_cool_v2(1e2)
+        self.initial_cool_v2(1e3)
         self.remove_droplets()
         # self.hydrostatic_equilibrium(initial_extrapolation=False)
         self.get_photosphere()
+
         if plot_check:
             self.plot('rho', cmap='magma')
             self.plot('t_cool', plot_photosphere=True)
@@ -572,13 +599,18 @@ class photosphere:
 
 if __name__ == '__main__':
     snap = snapshot('snapshots/basic_twin/snapshot_0411.hdf5')
+    # snap = snapshot(get_filename(9, 4))
     phot = photosphere(snap, resolution=500, n_theta=80)
-    phot.analyse(plot_check=False)
-    phot.set_up_cooling_shells()
-    phot.correction()
-    phot.get_photosphere()
-    phot.cool_step(5e5)
-    phot.get_photosphere()
 
-    phot.plot('tau_v', log=True, plot_photosphere=True, round_to=1)
-    phot.plot('t_cool', log=True, plot_photosphere=True, round_to=1)
+    phot.get_photosphere()
+    phot.plot('t_cool', plot_photosphere=True)
+    phot.plot('alpha_v', plot_photosphere=True)
+    phot.plot('T', plot_photosphere=True, log=False, round_to=1000)
+    phot.plot('s', plot_photosphere=True, log=False, round_to=1000)
+    phot.plot('rho', plot_photosphere=True, log=True)
+    phot.plot('T', plot_photosphere=True)
+
+# new sims that work: 0, 1, 3, 4, 6, 8
+# 8, 9 requires cooling
+# 4, 6 has some weird bits
+# 5 also (not really a synestia)

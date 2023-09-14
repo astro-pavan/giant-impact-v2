@@ -459,19 +459,21 @@ class photosphere:
         self.calculate_EOS()
 
     def initial_cool_v2(self, max_time):
-        u1, rho = self.data['u'], self.data['rho']
+        print(np.nanmin(self.data['t_cool']))
+        u1, rho, T1 = self.data['u'], self.data['rho'], np.array(self.data['T'])
         t_cool = self.data['t_cool']
-        k = np.minimum(max_time / t_cool, 0.9)
+        k = np.minimum(max_time / t_cool, 0.99)
         du = k * u1
         u2 = u1 - du
-        T2 = fst.T2_EOS(u2, rho)
+        T2 = fst.T2_EOS(u1, rho)
+
+        self.data['test'] = T2
+        self.plot('test', log=False, round_to=1000)
 
         self.data['T'] = T2
         self.data['P'] = fst.P_EOS(rho, T2)
         self.data['s'] = fst.S_EOS(rho, T2)
         self.calculate_EOS()
-
-        print(np.nanmin(self.data['t_cool']))
 
     def set_up_cooling_shells(self):
 
@@ -601,14 +603,14 @@ if __name__ == '__main__':
     snap = snapshot('snapshots/basic_twin/snapshot_0411.hdf5')
     # snap = snapshot(get_filename(9, 4))
     phot = photosphere(snap, resolution=500, n_theta=80)
+    phot.analyse()
 
-    phot.get_photosphere()
     phot.plot('t_cool', plot_photosphere=True)
-    phot.plot('alpha_v', plot_photosphere=True)
+    phot.plot('alpha', plot_photosphere=True)
     phot.plot('T', plot_photosphere=True, log=False, round_to=1000)
     phot.plot('s', plot_photosphere=True, log=False, round_to=1000)
-    phot.plot('rho', plot_photosphere=True, log=True)
-    phot.plot('T', plot_photosphere=True)
+    phot.plot('rho', plot_photosphere=True)
+    phot.plot('P', plot_photosphere=True)
 
 # new sims that work: 0, 1, 3, 4, 6, 8
 # 8, 9 requires cooling

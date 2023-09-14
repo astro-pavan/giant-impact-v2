@@ -50,15 +50,20 @@ snapshot_names = [
 
 snapshot_times = [0, 0.5, 2, 8, 40]
 
-m_target = np.array([0.4992,
-                     0.0999, 0.2499, 0.9995, 1.9989,
-                     0.4992, 0.4992, 0.4992,
-                     0.4992, 0.4992, 0.4992]) * Mearth
+m_target = np.array([0.5,
+                     0.1, 0.25, 1.0, 2,
+                     0.5, 0.5, 0.5,
+                     0.5, 0.5, 0.5]) * Mearth
 
-m_impactor = np.array([0.4992,
-                       0.0999, 0.2499, 0.9995, 1.9989,
-                       0.0250, 0.0998, 0.2496,
-                       0.4992, 0.4992, 0.4992]) * Mearth
+m_impactor = np.array([0.5,
+                       0.1, 0.25, 1.0, 2.0,
+                       0.025, 0.1, 0.25,
+                       0.5, 0.5, 0.5]) * Mearth
+
+v_over_v_esc = np.array([1.1,
+                         1.1, 1.1, 1.1, 1.1,
+                         1.1, 1.1, 1.1,
+                         1.1, 1.1, 1.1])
 
 v_impact_z = np.array([7023,
                        4102, 5574, 8857, 11165,
@@ -96,7 +101,8 @@ def luminosity_plots():
         filename = get_filename(i, 4)
         snap = snapshot(filename)
         phot = photosphere(snap, 12 * Rearth, 35 * Rearth, 600, n_theta=40)
-        phot.analyse(plot_check=True)
+        phot.analyse(plot_check=False)
+        phot.plot('alpha', plot_photosphere=True)
         L[i] = phot.L_phot
         AM[i] = snap.total_angular_momentum
         SAM[i] = snap.total_specific_angular_momentum
@@ -106,11 +112,47 @@ def luminosity_plots():
     plt.yscale('log')
     plt.xlabel('Modified specific Impact Energy (J/kg)')
     plt.ylabel('Luminosity ($L_{\odot}$)')
-    plt.show()
+
+    plt.savefig('figures/QL_plot.png', bbox_inches='tight')
+    plt.savefig('figures/QL_plot.pdf', bbox_inches='tight')
+    plt.close()
 
 
 def impact_plots():
-    pass
+    # default impact
+    # change b (up and down?)
+    # change gamma
+    # change m (up and down?)
+    # 4-6 impacts shown
+
+    sims = [0, 8, 6, 4]
+    rows, cols = len(sims), len(snapshot_names)
+
+    fig, ax = plt.subplots(nrows=rows, ncols=cols, squeeze=False, sharey=True, sharex=True)
+
+    fig.set_figwidth(2.5 * cols)
+    fig.set_figheight(2.5 * rows)
+
+    for i in range(rows):
+        for j in range(cols):
+            snap = snapshot(get_filename(sims[i], j))
+            img = gas_slice(snap, size=6)
+            ax[i, j] = img.plot('rho', show=False, threshold=1e-2, ax=ax[i, j], colorbar=False)
+            if i != rows - 1:
+                ax[i, j].set_xlabel('')
+                ax[i, j].set_xticklabels([])
+            if j != 0:
+                ax[i, j].set_ylabel('')
+                ax[i, j].set_yticklabels([])
+            if i == 0:
+                ax[i, j].set_title(f'T = {snapshot_times[j]:.1f} hrs')
+
+    plt.subplots_adjust(wspace=0.02)
+    plt.subplots_adjust(hspace=0.02)
+
+    plt.savefig('figures/impact_plot.png', bbox_inches='tight')
+    plt.savefig('figures/impact_plot.pdf', bbox_inches='tight')
+    plt.close()
 
 
 def example_extrapolation():
@@ -123,6 +165,8 @@ def phase_diagram(filename):
     x, y = np.meshgrid(S, P)
     rho, T = fst.rho_EOS(x, y), fst.T1_EOS(x, y)
     z = np.log10(fst.alpha(rho, T, y, x))
+    z = np.where(np.isfinite(z), z, np.NaN)
+    plt.figure(figsize=(13, 9))
     plt.contourf(x, y, z, 200, cmap='plasma')
     cbar = plt.colorbar(label='$\log_{10}$[' + data_labels['alpha'] + ']')
 
@@ -138,9 +182,9 @@ def phase_diagram(filename):
     plt.legend(loc='lower left')
     plt.xlim([4000, 12000])
     plt.ylim([1e1, 1e9])
-    plt.annotate('L', (4400, 1e8), c='white')
-    plt.annotate('L+V', (6500, 1e4), c='white')
-    plt.annotate('V', (10000, 1e8), c='white')
+    plt.annotate('Liquid', (4200, 1e8), c='white')
+    plt.annotate('Liquid + Vapour', (6300, 1e4), c='white')
+    plt.annotate('Vapour', (9800, 1e8), c='white')
 
     snap = snapshot(filename)
     phot = photosphere(snap, 12 * Rearth, 35 * Rearth, 600, n_theta=40)
@@ -161,7 +205,15 @@ def phase_diagram(filename):
     for j in range(len(rad)):
         plt.annotate(r_labels[j], (S_points[j], P_points[j]), xytext=(-37, -5), textcoords='offset points', color='black')
 
-    plt.show()
+    plt.savefig('figures/phase_diagram.png', bbox_inches='tight')
+    plt.savefig('figures/phase_diagram.pdf', bbox_inches='tight')
+    plt.close()
 
 
-phase_diagram(filename=get_filename(0, 4))
+def make_table():
+    for i in range(len(m_target)):
+        mass_ratio = m_impactor / m_target
+        print(f'{m_target[i]/Mearth:.1f} & {impact_parameter[i]:.1f} & {mass_ratio[i]:.2f} & {v_over_v_esc[i]:.1f} & LUM \\\\')
+
+
+phase_diagram(get_filename(0, 4))

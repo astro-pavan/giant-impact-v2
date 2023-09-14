@@ -60,7 +60,7 @@ S_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.S.T, method=me
 cs_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.cs.T, method=method, bounds_error=False, fill_value=np.NaN)
 rho_interp, T_interp = lambda x: np.full_like(x, np.NaN), lambda x: np.full_like(x, np.NaN)
 T2_interp = lambda x: np.full_like(x, np.NaN)
-S_range, log_P_range = [2000, 20000], [-2, 13]
+S_range, log_P_range = [1000, 20000], [-4, 13]
 
 
 def globalize(func):
@@ -95,7 +95,7 @@ def reverse_EOS_table_rho_X(interpolator, table, rho, X):
 
     # calculates the error for checking
     X_check = interpolator(rho, T_res)
-    check_error = frac_error(X_check, X)
+    check_error = np.abs(frac_error(X_check, X))
 
     return T_res, check_error
 
@@ -190,7 +190,7 @@ def generate_table_u_rho(load_from_file=False, n=10):
         T_table = np.load(f'EOS_tables/T_uRho_table_n_{n}.npy', allow_pickle=True)
 
     # produces table points to be calculated
-    u = np.logspace(5, 8, num=n)
+    u = np.concatenate((np.linspace(0, 1e5, num=int(n/2)), np.logspace(5.1, 7.5, num=int(n/2))))
     log_rho = np.linspace(-6, 5, num=n)
     x, y = np.meshgrid(u, log_rho)
 
@@ -225,8 +225,9 @@ def generate_table_u_rho(load_from_file=False, n=10):
         np.save(f'EOS_tables/T_uRho_table_n_{n}.npy', T_table)
 
         plt.contourf(u, log_rho, np.log10(error_table), 80)
-        plt.contour(u, log_rho, np.log10(error_table), [-1, 0], colors='black')
+        plt.xscale('log')
         plt.colorbar()
+        plt.contour(u, log_rho, np.log10(error_table), [-1, 0], colors='black')
         plt.show()
 
     T2_interp = RegularGridInterpolator((u, log_rho), T_table, method=method, bounds_error=False, fill_value=np.NaN)
@@ -419,7 +420,7 @@ def alpha(rho, T, P, S, D0=1e-3):
         result = np.where(ph == 2, alpha_v(rho, T) + alpha_l(rho, P, S, D0), result)
     else:
         result = np.where(ph == 2, alpha_v(rho, T), result)
-    result = np.where(ph == 3, alpha_v(rho, T), result)
+    result = np.where(ph >= 3, alpha_v(rho, T), result)
 
     return result
 

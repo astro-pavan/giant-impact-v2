@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.interpolate import interp1d, RegularGridInterpolator
 from scipy.integrate import odeint
+from scipy.special import exp1
 from swiftsimio.visualisation.rotation import rotation_matrix_from_vector
 from swiftsimio.visualisation.slice import slice_gas
 from unyt import Rearth, m
@@ -189,7 +190,7 @@ class photosphere:
 
         # extrapolation performed here
         self.entropy_extrapolation = self.extrapolate_entropy()
-        self.hydrostatic_equilibrium(initial_extrapolation=True, solve_log=True)
+        self.hydrostatic_equilibrium(initial_extrapolation=True)
         self.calculate_EOS()
 
     def plot(self, parameter, log=True, contours=None, cmap='turbo', plot_photosphere=False, limits=None, round_to=1):
@@ -270,20 +271,7 @@ class photosphere:
         result = rho * (gravity + centrifugal)
         return np.nan_to_num(result)
 
-    def dlnPdr(self, lnP, r, theta, S_funct=None):
-        gravity = - (6.674e-11 * self.central_mass) / (r ** 2)
-
-        R = r * np.sin(theta)
-        omega = self.snapshot.best_fit_rotation_curve_mks(R)
-        centrifugal = R * (omega ** 2) * np.sin(theta)
-
-        S = S_funct(r, theta)
-        rho = fst.rho_EOS(S, np.exp(lnP))
-
-        result = np.exp(-lnP) * rho * (gravity + centrifugal)
-        return np.nan_to_num(result)
-
-    def hydrostatic_equilibrium(self, initial_extrapolation=False, solve_log=False):
+    def hydrostatic_equilibrium(self, initial_extrapolation=False):
 
         print('Solving hydrostatic equilibrium:')
 
@@ -307,18 +295,15 @@ class photosphere:
         def extrapolate(i):
 
             j_0 = np.int32(j_start[i])
-            P_0 = self.data['P'][i, j_0] if not solve_log else np.log(self.data['P'][i, j_0])
+            P_0 = self.data['P'][i, j_0]
 
-            if solve_log:
-                f = lambda lnP, r: self.dlnPdr(lnP, r, theta[i], S_funct=S_funct)
-            else:
-                f = lambda P, r: self.dPdr(P, r, theta[i], S_funct=S_funct)
+            f = lambda P, r: self.dPdr(P, r, theta[i], S_funct=S_funct)
 
             r_solution = self.data['r'][i, j_0:]
             solution = odeint(f, P_0, r_solution)
             #solution = solve_ivp(lambda t, y: f(y, t), )
 
-            P_solution = np.nan_to_num(np.exp(solution) if solve_log else solution)
+            P_solution = np.nan_to_num(solution)
 
             print(u"\u2588", end='')
             return P_solution.T, j_0, i
@@ -351,15 +336,21 @@ class photosphere:
         self.data['vq'] = fst.vapor_quality(self.data['s'], self.data['P'])
         self.data['lvf'] = fst.liquid_volume_fraction(self.data['rho'], self.data['P'], self.data['s'])
 
-        emissivity = np.minimum((self.data['alpha_v'] * self.data['V']) / self.data['A_r+'], 1)
+        # emissivity = np.minimum((self.data['alpha_v'] * self.data['V']) / self.data['A_r+'], 1)
+        tau = self.data['alpha_v'] * self.data['dr']
+        emissivity = 1 - np.exp(-tau) + tau * exp1(tau)
+
         L = sigma * self.data['T'] ** 4 * self.data['A_r+'] * emissivity
-        self.data['t_cool'] = self.data['E'] / L
+        t = self.data['E'] / L
+        self.data['t_cool'] = (t / self.data['dr']) * self.data['r']
+        self.data['t_cool_2'] = t
+
+        A_eff = self.data['V'] * self.data['alpha_v']
+        self.data['test'] = np.minimum(A_eff/self.data['A_r+'], 1)
 
     def remove_droplets(self):
         condensation_mask = self.data['phase'] == 2
         initial_mass = np.nansum(self.data['m'][condensation_mask])
-
-        print('Removing droplets...')
 
         new_S = fst.condensation_S(self.data['s'], self.data['P'])
         self.data['s'] = np.where(condensation_mask, new_S, self.data['s'])
@@ -369,19 +360,22 @@ class photosphere:
 
         final_mass = np.nansum(self.data['m'][condensation_mask])
         mass_lost = initial_mass - final_mass
-        print(f'{mass_lost / 5.972e24:.2e} M_earth lost')
+        print(f'Removing droplets: {mass_lost / 5.972e24:.2e} M_earth lost')
 
     def get_photosphere(self):
         print('Finding photosphere...')
+
+        self.data['optical_depth'] = np.zeros_like(self.data['r'])
         
         @globalize
         def optical_depth_integration(i):
             optical_depth = 0
             j = self.n_r - 1
 
-            while optical_depth < 1:
+            while optical_depth < (2/3):
                 tau = self.data['tau_v'][i, j]
                 optical_depth += tau
+                self.data['optical_depth'][i, j] = optical_depth
                 j -= 1
 
             T = self.data['T'][i, j]
@@ -390,8 +384,12 @@ class photosphere:
             
             return np.int32(i), np.int32(j), T, r, L
 
-        pool = Pool(cpus - 1)
-        results = pool.map(optical_depth_integration, range(self.n_theta))
+        # pool = Pool(cpus - 1)
+        # results = pool.map(optical_depth_integration, range(self.n_theta))
+        results = []
+
+        for i in range(self.n_theta):
+            results.append(optical_depth_integration(i))
 
         r_phot = np.zeros(self.n_theta)
         T_phot, L_phot = np.zeros_like(r_phot), np.zeros_like(r_phot)
@@ -458,22 +456,47 @@ class photosphere:
 
         self.calculate_EOS()
 
-    def initial_cool_v2(self, max_time):
-        print(np.nanmin(self.data['t_cool']))
+    def initial_cool_v2(self):
+        min_cooling_time = np.nanmin(self.data['t_cool'])
+        dt = min_cooling_time / 4
+        print(f'Initial cool for {dt:.2e} seconds')
         u1, rho, T1 = self.data['u'], self.data['rho'], np.array(self.data['T'])
         t_cool = self.data['t_cool']
-        k = np.minimum(max_time / t_cool, 0.99)
+        k = np.minimum(dt / t_cool, 0.99)
         du = k * u1
         u2 = u1 - du
-        T2 = fst.T2_EOS(u1, rho)
+        T2 = fst.T2_EOS(u2, rho)
 
-        self.data['test'] = T2
-        self.plot('test', log=False, round_to=1000)
+        # self.data['test'] = T1 - T2
+        # self.plot('test', log=False, round_to=1000)
 
         self.data['T'] = T2
         self.data['P'] = fst.P_EOS(rho, T2)
         self.data['s'] = fst.S_EOS(rho, T2)
         self.calculate_EOS()
+
+    def initial_cool_v3(self, max_time):
+
+        def cool_column(i):
+
+            total_time, optical_depth = 0, 0
+
+            for j in range(self.n_r - 1, 0, -1):
+                t = self.data['t_cool_2'][i, j]
+                optical_depth += self.data['alpha_v'][i, j] * self.data['dr'][i, j]
+
+                if optical_depth > (2/3):
+                    total_time += t
+                else:
+                    total_time = np.maximum(t, total_time)
+
+                if total_time > max_time and optical_depth > (2/3):
+                    break
+
+            k = np.minimum(max_time / self.data['t_cool_2'], 0.9)
+
+        for i in range(self.n_theta):
+            print(cool_column(i))
 
     def set_up_cooling_shells(self):
 
@@ -487,16 +510,12 @@ class photosphere:
             self.data['shell'][i, j2:j3] = 2
             self.data['shell'][i, j3:] = 3
 
-        # inner_mask = self.data['shell'] == 1
-        #
-        # E_outer = np.nansum(self.data['E'][inner_mask])
-        # m_outer = np.nansum(self.data['m'][inner_mask])
-        # u_outer = E_outer / m_outer
-        # self.data['u'][inner_mask] = u_outer
-        # self.data['T'][inner_mask] = fst.T2_EOS(self.data['u'][inner_mask], self.data['rho'][inner_mask])
-        # self.data['P'][inner_mask] = fst.P_EOS(self.data['rho'][inner_mask], self.data['T'][inner_mask])
-        # self.data['s'][inner_mask] = fst.P_EOS(self.data['rho'][inner_mask], self.data['T'][inner_mask])
-        # self.calculate_EOS()
+        inner_mask = self.data['shell'] < 3
+        E_inner = np.nansum(self.data['E'][inner_mask])
+        E_outer = np.nansum(self.data['E'][~inner_mask])
+        print(f'Energy in photosphere: {E_inner:.2e} J')
+        print(f'Energy outside of photosphere: {E_outer:.2e} J')
+        print(f'Luminosity: {self.L_phot:.2e}')
 
     def get_shell_area(self, shell_num):
         mask = self.data['shell'] > shell_num
@@ -524,7 +543,7 @@ class photosphere:
 
         return t_cool
 
-    def cool_step(self, dt):
+    def cool_step_inner(self, dt):
 
         phot_mask = self.data['shell'] < 3
 
@@ -537,18 +556,18 @@ class photosphere:
         du_in = dE_in / m_in
         u2_in = self.data['u'] * (1 - du_in / u_avg_in)
 
-        print(f'Cooling by {du_in/u_avg_in:.3%} over {dt/(3600*24):.1f} days')
+        print(f'Cooling by {du_in/u_avg_in:.3%} over {dt/(3600*24):.2f} days')
+        print(f'Energy loss inner region: {dE_in:.2e}')
 
         # cool outer region
-        m_out = np.nansum(self.data['m'][~phot_mask])
-        E_out = np.nansum(self.data['E'][~phot_mask])
-        dE_out = np.nansum((self.data['alpha_v'] * self.data['V'] * sigma * self.data['T'] ** 4 * dt)[~phot_mask])
-        u_avg_out = E_out / m_out
-        du_out = dE_out / m_out
+        # m_out = np.nansum(self.data['m'][~phot_mask])
+        # E_out = np.nansum(self.data['E'][~phot_mask])
+        # dE_out = np.nansum((self.data['alpha_v'] * self.data['V'] * sigma * self.data['T'] ** 4 * dt)[~phot_mask])
+        # u_avg_out = E_out / m_out
+        # du_out = dE_out / m_out
         u2_out = self.data['u']
 
-        emissivity = self.data['alpha_v'] * self.data['V'] / self.data['A_r+']
-
+        # emissivity = self.data['alpha_v'] * self.data['V'] / self.data['A_r+']
         # u2_out = self.data['u'] - du_out
         # u2_out = np.where(u2_out <= 0, 2e5, u2_out)
 
@@ -557,6 +576,89 @@ class photosphere:
         self.data['P'] = fst.P_EOS(self.data['rho'], self.data['T'])
         self.data['S'] = fst.S_EOS(self.data['rho'], self.data['T'])
         self.calculate_EOS()
+
+    def cool_step_outer(self, dt):
+
+        outer_mask = self.data['shell'] == 3
+
+        @globalize
+        def cool_column(i):
+            j_0 = int(self.j_phot[i])
+
+            A, T = self.data['A_r+'][i, :], self.data['T'][i, :]
+            tau = self.data['tau_v'][i, :]
+            L = np.zeros_like(A)
+
+            L_in = A[j_0] * sigma * T[j_0] ** 4
+            L_out = L_in
+            L_in_0 = L_in
+
+            for j in range(j_0 + 1, self.n_r - 1):
+                I_in = L_in / (2 * pi * A[j - 1])
+                S = (sigma * T[j] ** 4) / (2 * pi)
+                S = 0
+
+                I_out = (I_in - S) * (np.exp(-tau[j]) - tau[j] * exp1(tau[j])) + S
+                I_out = I_in * (np.exp(-tau[j]) - tau[j] * exp1(tau[j]))
+
+                assert I_out < I_in
+
+                L_out = 2 * pi * I_out * A[j - 1]
+
+                assert not np.isnan(I_out)
+
+                L[j] = L_out - L_in
+                L_in = L_out
+
+            #print(u"\u2588", end='')
+            return L, i, j_0, L_in_0, L_out
+
+        # pool = Pool(cpus - 1)
+        # # print('Performing radiative transfer approximation: ')
+        # results = pool.map(cool_column, range(self.n_theta))
+        # # print(' DONE')
+        results = []
+        for i in range(self.n_theta):
+            results.append(cool_column(i))
+
+        dE = np.zeros_like(self.data['r'])
+        L_esc = np.zeros(self.n_theta)
+        L_phot = np.zeros(self.n_theta)
+
+        for r in results:
+            i, j_0 = r[1], r[2]
+            dE[i:i + 1, j_0:] = r[0][j_0:]
+            L_esc[i] = r[4]
+            L_phot[i] = r[3]
+
+        L_outer = np.sum(L_esc)
+        L_photosphere = np.sum(L_phot)
+
+        print(f'Photosphere luminosity: {L_photosphere:.2e}  Outer luminosity: {L_outer:.2e}')
+
+        # dE_total = np.sum(E_phot) - np.sum(E_esc)
+        # print(f'Energy loss in outer shell: {-dE_total:.2e}')
+        # E_outer = np.sum(self.data['E'][outer_mask])
+        # print(f'Energy in outer shell: {E_outer:.2e}')
+        #
+        # m_total = np.sum(self.data['m'][outer_mask])
+        # du_avg = dE_total / m_total
+        # u_avg = E_outer / m_total
+        # u1 = self.data['u']
+        # u2 = u1 * (1 + (du_avg / u_avg))
+
+        # du = dE / self.data['m']
+        # u1 = self.data['u']
+        # u2 = u1 + du
+        # self.data['test'] = du
+        # self.plot('test', log=False, round_to=1e11, contours=[0])
+
+        #self.data['u'] = np.where(u2 > 0, u2, 0)
+        # self.data['u'] = np.where(outer_mask, u2, u1)
+        # self.data['T'] = fst.T2_EOS(self.data['u'], self.data['rho'])
+        # self.data['P'] = fst.P_EOS(self.data['rho'], self.data['T'])
+        # self.data['S'] = fst.S_EOS(self.data['rho'], self.data['T'])
+        # self.calculate_EOS()
 
     def correction(self):
 
@@ -585,10 +687,10 @@ class photosphere:
             self.plot('T', log=False, cmap='coolwarm')
             self.plot('alpha_v')
 
-        self.initial_cool_v2(1e0)
-        self.initial_cool_v2(1e1)
-        self.initial_cool_v2(1e2)
-        self.initial_cool_v2(1e3)
+        self.initial_cool_v2()
+        self.initial_cool_v2()
+        self.initial_cool_v2()
+        self.initial_cool_v2()
         self.remove_droplets()
         # self.hydrostatic_equilibrium(initial_extrapolation=False)
         self.get_photosphere()
@@ -600,17 +702,14 @@ class photosphere:
 
 
 if __name__ == '__main__':
+
     snap = snapshot('snapshots/basic_twin/snapshot_0411.hdf5')
     # snap = snapshot(get_filename(9, 4))
-    phot = photosphere(snap, resolution=500, n_theta=80)
+    phot = photosphere(snap, resolution=500, n_theta=40, max_size=70*Rearth)
     phot.analyse()
+    phot.set_up_cooling_shells()
+    phot.plot('optical_depth')
 
-    phot.plot('t_cool', plot_photosphere=True)
-    phot.plot('alpha', plot_photosphere=True)
-    phot.plot('T', plot_photosphere=True, log=False, round_to=1000)
-    phot.plot('s', plot_photosphere=True, log=False, round_to=1000)
-    phot.plot('rho', plot_photosphere=True)
-    phot.plot('P', plot_photosphere=True)
 
 # new sims that work: 0, 1, 3, 4, 6, 8
 # 8, 9 requires cooling

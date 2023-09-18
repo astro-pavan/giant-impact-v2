@@ -142,7 +142,6 @@ def generate_table_S_P(load_from_file=False, n=10):
         rho_table, T_table = np.zeros_like(x), np.zeros_like(x)
         error_table = np.zeros_like(x)
 
-        woma.load_eos_tables(['ANEOS_forsterite'])
         S_woma = lambda rho, T: woma.s_rho_T(rho, T, 400)
         P_woma = lambda rho, T: woma.P_T_rho(T, rho, 400)
 
@@ -190,8 +189,8 @@ def generate_table_u_rho(load_from_file=False, n=10):
         T_table = np.load(f'EOS_tables/T_uRho_table_n_{n}.npy', allow_pickle=True)
 
     # produces table points to be calculated
-    u = np.concatenate((np.linspace(0, 1e5, num=int(n/2)), np.logspace(5.1, 7.5, num=int(n/2))))
-    log_rho = np.linspace(-6, 5, num=n)
+    u = np.concatenate((np.linspace(0, 1e5, num=int(n/2)), np.logspace(5.1, 8, num=int(n/2))))
+    log_rho = np.linspace(-8, 5, num=n)
     x, y = np.meshgrid(u, log_rho)
 
     if not load_from_file:
@@ -202,9 +201,10 @@ def generate_table_u_rho(load_from_file=False, n=10):
         def task(i):
             print(f'Start {i}')
             for j in range(x.shape[1]):
-                T_table[j, i], error_table[j, i] = reverse_EOS_table_rho_X(u_EOS, NewEOS.U, 10 ** y[i, j], x[i, j])
+                #T_table[j, i], error_table[j, i] = reverse_EOS_table_rho_X(u_EOS, NewEOS.U, 10 ** y[i, j], x[i, j])
+                T_table[j, i] = woma.T_u_rho(x[i, j], 10 ** y[i, j], 400)
             print(f'Done {i}')
-            return T_table[:, i], error_table[:, i], i
+            return T_table[:, i], i
 
         # fills table values
         print('Generating u rho EOS table:')
@@ -214,9 +214,8 @@ def generate_table_u_rho(load_from_file=False, n=10):
             results = pool.map(task, range(x.shape[0]))
 
         for r in results:
-            i = r[2]
+            i = r[1]
             T_table[:, i] = r[0]
-            error_table[:, i] = r[1]
 
         # for i in tqdm(range(x.shape[0])):
         #     for j in range(x.shape[1]):
@@ -224,11 +223,11 @@ def generate_table_u_rho(load_from_file=False, n=10):
 
         np.save(f'EOS_tables/T_uRho_table_n_{n}.npy', T_table)
 
-        plt.contourf(u, log_rho, np.log10(error_table), 80)
-        plt.xscale('log')
-        plt.colorbar()
-        plt.contour(u, log_rho, np.log10(error_table), [-1, 0], colors='black')
-        plt.show()
+        # plt.contourf(u, log_rho, np.log10(error_table), 80)
+        # plt.xscale('log')
+        # plt.colorbar()
+        # plt.contour(u, log_rho, np.log10(error_table), [-1, 0], colors='black')
+        # plt.show()
 
     T2_interp = RegularGridInterpolator((u, log_rho), T_table, method=method, bounds_error=False, fill_value=np.NaN)
 
@@ -317,8 +316,13 @@ def EOS(rho=None, T=None, P=None, S=None, u=None, check=False):
     return rho, T, P, S, u
 
 
-generate_table_u_rho(load_from_file=True, n=100)
-generate_table_S_P(load_from_file=True, n=100)
+if __name__ == '__main__':
+    woma.load_eos_tables(['ANEOS_forsterite'])
+    generate_table_u_rho(load_from_file=False, n=200)
+    generate_table_S_P(load_from_file=False, n=200)
+else:
+    generate_table_u_rho(load_from_file=True, n=200)
+    generate_table_S_P(load_from_file=True, n=200)
 
 # PHASE CALCULATIONS HERE #
 

@@ -1,5 +1,6 @@
 # extracts data from a snapshot and analyses it, producing a 2D photosphere model
 import matplotlib.pyplot as plt
+from matplotlib.colors import Normalize
 import numpy as np
 from scipy.interpolate import interp1d, RegularGridInterpolator
 from scipy.integrate import odeint
@@ -190,6 +191,8 @@ class photosphere:
         self.hydrostatic_equilibrium(initial_extrapolation=True)
         self.calculate_EOS()
 
+        self.verbose = True
+
     def plot(self, parameter, log=True, contours=None, cmap='turbo', plot_photosphere=False, limits=None, round_to=1, val_max=None):
         vals = np.log10(self.data[parameter]) if log else self.data[parameter]
         val_max = np.log10(val_max) if log and val_max is not None else val_max
@@ -198,12 +201,14 @@ class photosphere:
         z.convert_to_units(Rearth)
 
         plt.figure(figsize=(10, 8))
-        if val_max is not None:
-            plt.contourf(R, z, vals, 200, cmap=cmap, vmax=val_max)
-        else:
-            plt.contourf(R, z, vals, 200, cmap=cmap)
+        # if val_max is not None:
+        #     plt.contourf(R, z, vals, 200, cmap=cmap, vmax=val_max)
+        # else:
+        #     plt.contourf(R, z, vals, 200, cmap=cmap)
 
-        cbar = plt.colorbar(label=data_labels[parameter] if not log else '$\log_{10}$[' + data_labels[parameter] + ']')
+        cax = plt.contourf(R, z, vals, 200, cmap=cmap, norm=Normalize(vmax=val_max))
+
+        cbar = plt.colorbar(cax, label=data_labels[parameter] if not log else '$\log_{10}$[' + data_labels[parameter] + ']')
         plt.xlabel(data_labels['R'])
         plt.ylabel(data_labels['z'])
         if limits is not None:
@@ -215,7 +220,9 @@ class photosphere:
         plt.plot((self.R_min / R_earth) * np.sin(theta), (self.z_min / R_earth) * np.cos(theta), 'k--')
 
         vals = np.where(np.isfinite(vals), vals, np.NaN)
-        tick_positions = np.arange(np.ceil(np.nanmin(vals / round_to)), np.ceil(np.nanmax(vals / round_to))) * round_to
+        min_tick = np.ceil(np.nanmin(vals / round_to))
+        max_tick = np.minimum(np.ceil(np.nanmax(vals / round_to)), np.ceil(np.nanmax(val_max / round_to)))
+        tick_positions = np.arange(min_tick, max_tick) * round_to
         cbar.set_ticks(tick_positions)
 
         if contours is not None:
@@ -345,7 +352,10 @@ class photosphere:
 
         final_mass = np.nansum(self.data['m'][condensation_mask])
         mass_lost = initial_mass - final_mass
-        print(f'Removing droplets: {mass_lost / M_earth:.2e} M_earth lost')
+        if self.verbose:
+            print(f'Removing droplets: {mass_lost / M_earth:.2e} M_earth lost')
+
+        return mass_lost
 
     def get_photosphere(self):
 
@@ -363,7 +373,8 @@ class photosphere:
         self.z_phot = self.data['z'][phot_indexes]
         self.luminosity = np.sum(L)
 
-        print(f'Photosphere found with luminosity {self.luminosity/L_sun:.2e} L_sun')
+        if self.verbose:
+            print(f'Photosphere found with luminosity {self.luminosity/L_sun:.2e} L_sun')
 
     def initial_cool(self, max_time):
 
@@ -420,45 +431,84 @@ class photosphere:
         du_in = dE_in / m_in
         u2_in = u1 * (1 - du_in / u_avg_in)
 
-        # cool outer region
-        m_out = np.nansum(self.data['m'][outer_mask])
-        E_out = np.nansum(self.data['E'][outer_mask])
-        dE_out = self.luminosity * np.exp(outer_shell_depth - photosphere_depth) * dt
-        u_avg_out = E_out / m_out
-        du_out = dE_out / m_out
-        u2_out = u1 * (1 - du_out / u_avg_out)
+        # # cool outer region
+        # m_out = np.nansum(self.data['m'][outer_mask])
+        # E_out = np.nansum(self.data['E'][outer_mask])
+        # dE_out = self.luminosity * np.exp(outer_shell_depth - photosphere_depth) * dt
+        # u_avg_out = E_out / m_out
+        # du_out = dE_out / m_out
+        # u2_out = u1 * (1 - du_out / u_avg_out)
 
-        u2 = np.where(photosphere_mask, u2_in, u1)
-        u2 = np.where(outer_mask, u2_in, u1)
+        # u2 = np.where(photosphere_mask, u2_in, u1)
+        # u2 = np.where(outer_mask, u2_in, u1)
 
-        self.data['u'] = u2
+        self.data['u'] = u2_in
         self.data['T'] = fst.T2_EOS(self.data['u'], self.data['rho'])
         self.data['P'] = fst.P_EOS(self.data['rho'], self.data['T'])
         self.data['S'] = fst.S_EOS(self.data['rho'], self.data['T'])
         self.calculate_EOS()
 
-        print(f'Cooling by {du_in / u_avg_in:.3%} over {dt / (3600 * 24):.2f} days')
-        print(f'Energy loss inner region: {dE_in:.2e} ({du_in / u_avg_in:.3%})')
-        print(f'Energy loss outer region: {dE_out:.2e} ({du_out / u_avg_out:.3%})')
+        if self.verbose:
+            print(f'Cooling by {du_in / u_avg_in:.3%} over {dt / (3600 * 24):.2f} days')
+            print(f'Energy loss inner region: {dE_in:.2e} ({du_in / u_avg_in:.3%})')
+        # print(f'Energy loss outer region: {dE_out:.2e} ({du_out / u_avg_out:.3%})')
 
-    def initial_cool_v2(self):
-        min_cooling_time = np.nanmin(self.data['t_cool'])
+    def initial_cool_v2(self, max_time):
+
+        tau = self.data['alpha_v'] * self.data['dr']
+        emissivity = 1 - np.exp(-tau) + tau * exp1(tau)
+        L = sigma * self.data['T'] ** 4 * self.data['A_r+'] * emissivity
+        t_cool = (self.data['E'] / L) * (R_earth / self.data['dr'])
+
+        min_cooling_time = np.nanmin(t_cool)
         dt = min_cooling_time / 4
-        print(f'Initial cool for {dt:.2e} seconds')
+
+        if dt > max_time:
+            if self.verbose:
+                print('Max initial cooling time exceeded')
+            return False
+
+        if self.verbose:
+            print(f'Initial cool for {dt:.1e} seconds')
+
         u1, rho, T1 = self.data['u'], self.data['rho'], np.array(self.data['T'])
-        t_cool = self.data['t_cool']
         k = np.minimum(dt / t_cool, 0.99)
         du = k * u1
         u2 = u1 - du
         T2 = fst.T2_EOS(u2, rho)
 
-        # self.data['test'] = T1 - T2
-        # self.plot('test', log=False, round_to=1000)
-
         self.data['T'] = T2
         self.data['P'] = fst.P_EOS(rho, T2)
         self.data['s'] = fst.S_EOS(rho, T2)
         self.calculate_EOS()
+
+        return True
+
+    def long_term_evolution(self, n, dt):
+
+        phot.verbose = False
+
+        total_mass_loss = 0
+        L = [self.luminosity]
+        t = [0]
+        dt, n = 1e7, 400
+
+        print(f'Cooling for {n * dt:.1e} seconds ({n * dt / yr:.2f} years):')
+
+        for i in tqdm(range(n)):
+            self.cool_step(dt)
+            total_mass_loss += self.remove_droplets()
+            self.get_photosphere()
+
+            t.append(i * dt)
+            L.append(self.luminosity)
+
+        t = np.array(t) / yr
+        L = np.array(L) / L_sun
+
+        phot.verbose = True
+
+        return t, L
 
 
 if __name__ == '__main__':
@@ -466,16 +516,18 @@ if __name__ == '__main__':
     snap = snapshot('snapshots/basic_twin/snapshot_0411.hdf5')
     phot = photosphere(snap, resolution=500, n_theta=40, max_size=50*Rearth)
     phot.get_photosphere()
-    # phot.plot('tau', plot_photosphere=True, val_max=1e4)
 
-    phot.initial_cool(1e5)
+    while phot.initial_cool_v2(1e5):
+        pass
+
     phot.remove_droplets()
     phot.get_photosphere()
-    phot.plot('tau', plot_photosphere=True, val_max=1e4)
+    phot.plot('T', plot_photosphere=True, round_to=1000, log=False, val_max=8000)
 
-    phot.cool_step(1e6)
-    phot.get_photosphere()
-    phot.plot('tau', plot_photosphere=True, val_max=1e4)
+    t, L = phot.long_term_evolution(400, 1e7)
+
+    plt.plot(t, L)
+    plt.show()
 
 
 # new sims that work: 0, 1, 3, 4, 6, 8

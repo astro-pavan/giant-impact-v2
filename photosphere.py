@@ -221,7 +221,7 @@ class photosphere:
 
         vals = np.where(np.isfinite(vals), vals, np.NaN)
         min_tick = np.ceil(np.nanmin(vals / round_to))
-        max_tick = np.minimum(np.ceil(np.nanmax(vals / round_to)), np.ceil(np.nanmax(val_max / round_to)))
+        max_tick = np.ceil(np.nanmax(vals / round_to))
         tick_positions = np.arange(min_tick, max_tick) * round_to
         cbar.set_ticks(tick_positions)
 
@@ -277,6 +277,19 @@ class photosphere:
         result = rho * (gravity + centrifugal)
         return np.nan_to_num(result)
 
+    def dlnPdr(self, lnP, r, theta, S_funct=None):
+        gravity = - (6.674e-11 * self.central_mass) / (r ** 2)
+
+        R = r * np.sin(theta)
+        omega = self.snapshot.best_fit_rotation_curve_mks(R)
+        centrifugal = R * (omega ** 2) * np.sin(theta)
+
+        S = S_funct(r, theta)
+        rho = fst.rho_EOS(S, np.exp(lnP))
+
+        result = np.exp(-lnP) * rho * (gravity + centrifugal)
+        return np.nan_to_num(result)
+
     def hydrostatic_equilibrium(self, initial_extrapolation=False):
 
         print('Solving hydrostatic equilibrium:')
@@ -301,15 +314,18 @@ class photosphere:
         def extrapolate(i):
 
             j_0 = np.int32(j_start[i])
-            P_0 = self.data['P'][i, j_0]
 
-            f = lambda P, r: self.dPdr(P, r, theta[i], S_funct=S_funct)
+            # P_0 = self.data['P'][i, j_0]
+            # f = lambda P, r: self.dPdr(P, r, theta[i], S_funct=S_funct)
+
+            P_0 = np.log(self.data['P'][i, j_0])
+            f = lambda P, r: self.dlnPdr(P, r, theta[i], S_funct=S_funct)
 
             r_solution = self.data['r'][i, j_0:]
             solution = odeint(f, P_0, r_solution)
-            #solution = solve_ivp(lambda t, y: f(y, t), )
 
-            P_solution = np.nan_to_num(solution)
+            # P_solution = np.nan_to_num(solution)
+            P_solution = np.exp(np.nan_to_num(solution))
 
             print(u"\u2588", end='')
             return P_solution.T, j_0, i
@@ -501,11 +517,10 @@ class photosphere:
         total_mass_loss = 0
         L = [self.luminosity]
         t = [0]
-        dt, n = 1e7, 400
 
         print(f'Cooling for {n * dt:.1e} seconds ({n * dt / yr:.2f} years):')
 
-        for i in tqdm(range(n)):
+        for i in tqdm(range(1, n + 1)):
             self.cool_step(dt)
             total_mass_loss += self.remove_droplets()
             self.get_photosphere()

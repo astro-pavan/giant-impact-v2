@@ -6,7 +6,7 @@ from unyt import Rearth
 from tqdm import tqdm
 
 from snapshot_analysis import snapshot, gas_slice, data_labels
-from photosphere import photosphere
+from photosphere import photosphere, M_earth, L_sun, yr
 import EOS as fst
 
 Mearth = 5.972e24
@@ -83,8 +83,8 @@ impact_parameter = np.array([0.5,
 v_impact = np.sqrt(v_impact_x ** 2 + v_impact_z ** 2)
 Q_prime = modified_specific_impact_energy(m_target, m_impactor, v_impact, impact_parameter)
 
-indexes = [0, 1, 3, 4, 5, 6, 8, 9]
-missing_or_errors = [2, 7, 10]
+indexes = [0, 1, 2, 3, 4, 5, 6, 8, 9]
+missing_or_errors = [7, 10]
 
 
 def get_filename(i, i_time):
@@ -100,14 +100,15 @@ def luminosity_plots():
     for i in indexes:
         filename = get_filename(i, 4)
         snap = snapshot(filename)
-        phot = photosphere(snap, 12 * Rearth, 35 * Rearth, 600, n_theta=40)
-        phot.analyse(plot_check=False)
-        phot.plot('alpha', plot_photosphere=True)
-        L[i] = phot.L_phot
+        phot = photosphere(snap, 12 * Rearth, 50 * Rearth, 400, n_theta=20)
+        phot.set_up()
+        phot.plot('alpha')
+        L[i] = phot.luminosity / L_sun
+        time, lum, m = phot.long_term_evolution()
         AM[i] = snap.total_angular_momentum
         SAM[i] = snap.total_specific_angular_momentum
 
-    plt.scatter(Q_prime, L / 3.8e26)
+    plt.scatter(Q_prime, L)
     plt.xscale('log')
     plt.yscale('log')
     plt.xlabel('Modified specific Impact Energy (J/kg)')
@@ -116,6 +117,30 @@ def luminosity_plots():
     plt.savefig('figures/QL_plot.png', bbox_inches='tight')
     plt.savefig('figures/QL_plot.pdf', bbox_inches='tight')
     plt.close()
+
+
+def single_analysis(i):
+
+    filename = get_filename(i, 4)
+    snap = snapshot(filename)
+    phot = photosphere(snap, 12 * Rearth, 50 * Rearth, 1000, n_theta=100)
+
+    phot.plot('rho', plot_photosphere=True)
+    phot.plot('T', log=False, round_to=1000, plot_photosphere=True, val_max=8000)
+    phot.plot('P', plot_photosphere=True)
+    phot.plot('s', log=False, round_to=1000, plot_photosphere=True)
+
+    phot.set_up()
+
+    phot.plot('rho', plot_photosphere=True)
+    phot.plot('T', log=False, round_to=1000, plot_photosphere=True, val_max=8000)
+    phot.plot('P', plot_photosphere=True)
+    phot.plot('s', log=False, round_to=1000, plot_photosphere=True)
+    phot.plot('tau', plot_photosphere=True)
+
+    time, lum, m = phot.long_term_evolution()
+    plt.plot(time / yr, lum / L_sun)
+    plt.show()
 
 
 def impact_plots():
@@ -128,7 +153,7 @@ def impact_plots():
     sims = [0, 8, 6, 4]
     rows, cols = len(sims), len(snapshot_names)
 
-    fig, ax = plt.subplots(nrows=rows, ncols=cols, squeeze=False, sharey=True, sharex=True)
+    fig, ax = plt.subplots(nrows=rows, ncols=cols, squeeze=False, sharey='row', sharex='col')
 
     fig.set_figwidth(2.5 * cols)
     fig.set_figheight(2.5 * rows)
@@ -216,4 +241,18 @@ def make_table():
         print(f'{m_target[i]/Mearth:.1f} & {impact_parameter[i]:.1f} & {mass_ratio[i]:.2f} & {v_over_v_esc[i]:.1f} & LUM \\\\')
 
 
-phase_diagram(get_filename(0, 4))
+single_analysis(10)
+
+# 0 is unstable with HSE (problem with entropy extrapolation) and long term evolution
+
+# 1 has problems with long term evolution
+# 2 has an issue with late stage time evolution
+# 3 has some odd spikes in evolution
+# 4 has similar spikes
+
+# 5 has problems with long term evolution (its so dim it may not even be worth it)
+# 6 has weird evolution
+
+# 8 has issues with evolution
+# 9 has problems with long term evolution
+# 10 breaks at entropy extrapolation

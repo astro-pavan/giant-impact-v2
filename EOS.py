@@ -190,7 +190,7 @@ def generate_table_u_rho(load_from_file=False, n=10):
 
     # produces table points to be calculated
     u = np.concatenate((np.linspace(0, 1e5, num=int(n/2)), np.logspace(5.1, 8, num=int(n/2))))
-    log_rho = np.linspace(-8, 5, num=n)
+    log_rho = np.linspace(-10, 5, num=n)
     x, y = np.meshgrid(u, log_rho)
 
     if not load_from_file:

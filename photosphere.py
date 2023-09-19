@@ -48,7 +48,7 @@ def get_v(R, z, a):
 class photosphere:
 
     # sample size and max size both have units
-    def __init__(self, snapshot, sample_size=12*Rearth, max_size=40*Rearth, resolution=500, n_theta=100, n_phi=10):
+    def __init__(self, snapshot, sample_size=12*Rearth, max_size=50*Rearth, resolution=500, n_theta=100, n_phi=10):
 
         self.j_phot = np.zeros(n_theta + 1)
         self.luminosity = 0
@@ -368,10 +368,20 @@ class photosphere:
         i_phot = np.arange(self.n_theta)
 
         phot_indexes = tuple((i_phot, j_phot))
-        L = (self.data['A_r+'] * sigma * self.data['T'] ** 4)[phot_indexes]
+        # L = (self.data['A_r+'] * sigma * self.data['T'] ** 4)[phot_indexes]
+        L = 0
+        F = (sigma * self.data['T'] ** 4)[phot_indexes]
         self.R_phot = self.data['R'][phot_indexes]
         self.z_phot = self.data['z'][phot_indexes]
-        self.luminosity = np.sum(L)
+
+        for i in range(len(self.R_phot) - 1):
+            R1, R2 = self.R_phot[i], self.R_phot[i + 1]
+            z1, z2 = self.z_phot[i], self.z_phot[i + 1]
+            m = (z2 - z1)/(R2 - R1)
+            A = np.abs(pi * np.sqrt(1 + m ** 2) * (R2 ** 2 - R1 ** 2))
+            L += F[i] * A
+
+        self.luminosity = L
 
         if self.verbose:
             print(f'Photosphere found with luminosity {self.luminosity/L_sun:.2e} L_sun')
@@ -484,9 +494,9 @@ class photosphere:
 
         return True
 
-    def long_term_evolution(self, n, dt):
+    def long_term_evolution(self, n=200, dt=1e7):
 
-        phot.verbose = False
+        self.verbose = False
 
         total_mass_loss = 0
         L = [self.luminosity]
@@ -503,32 +513,26 @@ class photosphere:
             t.append(i * dt)
             L.append(self.luminosity)
 
-        t = np.array(t) / yr
-        L = np.array(L) / L_sun
+        t = np.array(t)
+        L = np.array(L)
 
-        phot.verbose = True
+        self.verbose = True
 
-        return t, L
+        return t, L, total_mass_loss
+
+    def set_up(self):
+
+        while self.initial_cool_v2(1e5):
+            pass
+
+        self.remove_droplets()
+        self.get_photosphere()
 
 
 if __name__ == '__main__':
-
     snap = snapshot('snapshots/basic_twin/snapshot_0411.hdf5')
-    phot = photosphere(snap, resolution=500, n_theta=40, max_size=50*Rearth)
-    phot.get_photosphere()
-
-    while phot.initial_cool_v2(1e5):
-        pass
-
-    phot.remove_droplets()
-    phot.get_photosphere()
-    phot.plot('T', plot_photosphere=True, round_to=1000, log=False, val_max=8000)
-
-    t, L = phot.long_term_evolution(400, 1e7)
-
-    plt.plot(t, L)
-    plt.show()
-
+    phot = photosphere(snap)
+    phot.analysis()
 
 # new sims that work: 0, 1, 3, 4, 6, 8
 # 8, 9 requires cooling

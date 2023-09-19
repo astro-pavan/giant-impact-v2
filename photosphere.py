@@ -14,7 +14,7 @@ import sys
 import uuid
 
 from snapshot_analysis import snapshot, data_labels
-import EOS as fst
+import EOS
 
 cpus = cpu_count()
 
@@ -137,9 +137,9 @@ class photosphere:
                 self.data[k] = (i * self.data[k] + vals[k]) / (i + 1)
 
         # fixes an error with infinite pressure
-        infinite_mask = np.isfinite(self.data['P'])
-        P_fix = fst.P_EOS(self.data['rho'], self.data['T'].value)
-        self.data['P'] = np.where(infinite_mask, self.data['P'], P_fix)
+        # infinite_mask = np.isfinite(self.data['P'])
+        # P_fix = EOS.P_fst_EOS(self.data['rho'], self.data['T'].value)
+        # self.data['P'] = np.where(infinite_mask, self.data['P'], P_fix)
 
         max_size.convert_to_mks()
 
@@ -163,15 +163,12 @@ class photosphere:
         r, dr = self.data['r'], self.data['dr']
         theta, d_theta = self.data['theta'], self.data['d_theta']
 
-        self.data['A_r-'] = 2 * pi * (r ** 2) * (cos(theta) - cos(theta + d_theta))
         self.data['A_r+'] = 2 * pi * ((r + dr) ** 2) * (cos(theta) - cos(theta + d_theta))
-
-        self.data['A_theta-'] = pi * ((r + dr) ** 2 - r ** 2) * sin(theta)
-        self.data['A_theta+'] = pi * ((r + dr) ** 2 - r ** 2) * sin(theta + d_theta)
-
-        self.data['A_theta+'][-1, :] = np.zeros_like(self.data['A_theta+'][-1, :])
-
-        self.data['V'] = (1/3) * pi * ((r + dr) ** 3 - r ** 3) * (cos(theta) - cos(theta + d_theta))
+        self.data['V'] = (1 / 3) * pi * ((r + dr) ** 3 - r ** 3) * (cos(theta) - cos(theta + d_theta))
+        # self.data['A_r-'] = 2 * pi * (r ** 2) * (cos(theta) - cos(theta + d_theta))
+        # self.data['A_theta-'] = pi * ((r + dr) ** 2 - r ** 2) * sin(theta)
+        # self.data['A_theta+'] = pi * ((r + dr) ** 2 - r ** 2) * sin(theta + d_theta)
+        # self.data['A_theta+'][-1, :] = np.zeros_like(self.data['A_theta+'][-1, :])
 
         # these values are used to calculate the index in the array for a given r and theta
         self.i_per_theta = n_theta / np.pi
@@ -184,7 +181,7 @@ class photosphere:
 
         self.central_mass = self.snapshot.total_mass.value
         self.data['omega'] = self.data['h'] * (self.data['R'] ** -2)
-        self.t_dyn = np.sqrt((max_size.value ** 3) / (6.674e-11 * self.central_mass))
+        self.iron_mask = self.data['matid'] > 400.8
 
         # extrapolation performed here
         self.entropy_extrapolation = self.extrapolate_entropy()
@@ -221,7 +218,7 @@ class photosphere:
 
         vals = np.where(np.isfinite(vals), vals, np.NaN)
         min_tick = np.ceil(np.nanmin(vals / round_to))
-        max_tick = np.minimum(np.ceil(np.nanmax(vals / round_to)), np.ceil(np.nanmax(val_max / round_to)))
+        max_tick = np.ceil(np.nanmax(vals / round_to))
         tick_positions = np.arange(min_tick, max_tick) * round_to
         cbar.set_ticks(tick_positions)
 
@@ -272,7 +269,7 @@ class photosphere:
         centrifugal = R * (omega ** 2) * np.sin(theta)
 
         S = S_funct(r, theta)
-        rho = fst.rho_EOS(S, P)
+        rho = EOS.rho_fst_EOS(S, P)
 
         result = rho * (gravity + centrifugal)
         return np.nan_to_num(result)
@@ -292,7 +289,7 @@ class photosphere:
             r = self.data['r'][0, :]
             theta = self.data['theta'][:, 0]
             S_interp = RegularGridInterpolator((theta, r), np.nan_to_num(self.data['s']), bounds_error=False, fill_value=np.NaN)
-            S_funct = lambda x, y: S_interp(fst.make_into_pair_array(y, x))
+            S_funct = lambda x, y: S_interp(EOS.make_into_pair_array(y, x))
 
             r_0 = np.sqrt((2 * np.sin(theta)) ** 2 + (2 * np.cos(theta)) ** 2) * R_earth
             j_start = self.get_index(r_0, theta)[1]
@@ -322,32 +319,35 @@ class photosphere:
             i, j_0 = r[2], r[1]
             self.data['P'][i:i + 1, j_0:] = r[0]
 
-        self.data['rho'] = fst.rho_EOS(self.data['s'], self.data['P'])
-        self.data['T'] = fst.T1_EOS(self.data['s'], self.data['P'])
+        self.data['rho'] = EOS.rho_fst_EOS(self.data['s'], self.data['P'])
+        self.data['T'] = EOS.T1_fst_EOS(self.data['s'], self.data['P'])
 
     def calculate_EOS(self):
-        iron_mask = self.data['matid'] > 400.8
 
-        self.data['alpha'] = fst.alpha(self.data['rho'], self.data['T'], self.data['P'], self.data['s'])
-        self.data['alpha_v'] = fst.alpha(self.data['rho'], self.data['T'], self.data['P'], self.data['s'], D0=0)
+        alpha = EOS.alpha(self.data['rho'], self.data['T'], self.data['P'], self.data['s'])
+        alpha_v = EOS.alpha(self.data['rho'], self.data['T'], self.data['P'], self.data['s'], D0=0)
 
-        self.data['u'] = fst.u_EOS(self.data['rho'], self.data['T'])
+        self.data['alpha'] = alpha
+        self.data['alpha_v'] = alpha_v
+
+        # self.data['u'] = np.where(self.iron_mask, EOS.u_iron_EOS(self.data['rho'], self.data['T']), EOS.u_fst_EOS(self.data['rho'], self.data['T']))
+        self.data['u'] = EOS.u_fst_EOS(self.data['rho'], self.data['T'])
         self.data['m'] = self.data['rho'] * self.data['V']
         self.data['E'] = self.data['u'] * self.data['m']
         self.data['rho_E'] = self.data['E'] / self.data['V']
 
-        self.data['phase'] = fst.phase(self.data['s'], self.data['P'])
-        self.data['vq'] = fst.vapor_quality(self.data['s'], self.data['P'])
-        self.data['lvf'] = fst.liquid_volume_fraction(self.data['rho'], self.data['P'], self.data['s'])
+        self.data['phase'] = EOS.phase(self.data['s'], self.data['P'])
+        # self.data['vq'] = EOS.vapor_quality(self.data['s'], self.data['P'])
+        # self.data['lvf'] = EOS.liquid_volume_fraction(self.data['rho'], self.data['P'], self.data['s'])
 
     def remove_droplets(self):
         condensation_mask = self.data['phase'] == 2
         initial_mass = np.nansum(self.data['m'][condensation_mask])
 
-        new_S = fst.condensation_S(self.data['s'], self.data['P'])
+        new_S = EOS.condensation_S(self.data['s'], self.data['P'])
         self.data['s'] = np.where(condensation_mask, new_S, self.data['s'])
-        self.data['rho'] = fst.rho_EOS(self.data['s'], self.data['P'])
-        self.data['T'] = fst.T1_EOS(self.data['s'], self.data['P'])
+        self.data['rho'] = EOS.rho_fst_EOS(self.data['s'], self.data['P'])
+        self.data['T'] = EOS.T1_fst_EOS(self.data['s'], self.data['P'])
         self.calculate_EOS()
 
         final_mass = np.nansum(self.data['m'][condensation_mask])
@@ -409,11 +409,11 @@ class photosphere:
         cool_factor = np.minimum(max_time / t_cool, 0.75)
         du = cool_factor * u1
         u2 = u1 - du
-        T2 = fst.T2_EOS(u2, rho)
+        T2 = EOS.T2_fst_EOS(u2, rho)
 
         self.data['T'] = np.where(cool_mask, T2, T1)
-        self.data['P'] = fst.P_EOS(rho, T2)
-        self.data['s'] = fst.S_EOS(rho, T2)
+        self.data['P'] = EOS.P_fst_EOS(rho, T2)
+        self.data['s'] = EOS.S_fst_EOS(rho, T2)
         self.calculate_EOS()
 
     def cool_step(self, dt):
@@ -429,7 +429,14 @@ class photosphere:
         dE_in = self.luminosity * dt
         u_avg_in = E_in / m_in
         du_in = dE_in / m_in
-        u2_in = u1 * (1 - du_in / u_avg_in)
+        u2 = u1 * (1 - du_in / u_avg_in)
+
+        T2 = EOS.T2_fst_EOS(u2, self.data['rho'])
+
+        self.data['T'] = T2
+        self.data['P'] = EOS.P_fst_EOS(self.data['rho'], T2)
+        self.data['s'] = EOS.S_fst_EOS(self.data['rho'], T2)
+        self.calculate_EOS()
 
         # # cool outer region
         # m_out = np.nansum(self.data['m'][outer_mask])
@@ -442,11 +449,11 @@ class photosphere:
         # u2 = np.where(photosphere_mask, u2_in, u1)
         # u2 = np.where(outer_mask, u2_in, u1)
 
-        self.data['u'] = u2_in
-        self.data['T'] = fst.T2_EOS(self.data['u'], self.data['rho'])
-        self.data['P'] = fst.P_EOS(self.data['rho'], self.data['T'])
-        self.data['S'] = fst.S_EOS(self.data['rho'], self.data['T'])
-        self.calculate_EOS()
+        # self.data['u'] = u2_in
+        # self.data['T'] = np.where(self.iron_mask, EOS.T2_iron_EOS(self.data['u'], self.data['rho']), EOS.T2_fst_EOS(self.data['u'], self.data['rho']))
+        # self.data['P'] = np.where(self.iron_mask, EOS.P_iron_EOS(self.data['rho'], self.data['T']), EOS.P_fst_EOS(self.data['rho'], self.data['T']))
+        # self.data['S'] = np.where(self.iron_mask, EOS.S_iron_EOS(self.data['rho'], self.data['T']), EOS.S_fst_EOS(self.data['rho'], self.data['T']))
+        # self.calculate_EOS()
 
         if self.verbose:
             print(f'Cooling by {du_in / u_avg_in:.3%} over {dt / (3600 * 24):.2f} days')
@@ -475,12 +482,21 @@ class photosphere:
         k = np.minimum(dt / t_cool, 0.99)
         du = k * u1
         u2 = u1 - du
-        T2 = fst.T2_EOS(u2, rho)
+        T2 = EOS.T2_fst_EOS(u2, rho)
 
         self.data['T'] = T2
-        self.data['P'] = fst.P_EOS(rho, T2)
-        self.data['s'] = fst.S_EOS(rho, T2)
+        self.data['P'] = EOS.P_fst_EOS(rho, T2)
+        self.data['s'] = EOS.S_fst_EOS(rho, T2)
         self.calculate_EOS()
+
+        # self.data['u'] = u2
+        # self.data['T'] = np.where(self.iron_mask, EOS.T2_iron_EOS(self.data['u'], self.data['rho']),
+        #                           EOS.T2_fst_EOS(self.data['u'], self.data['rho']))
+        # self.data['P'] = np.where(self.iron_mask, EOS.P_iron_EOS(self.data['rho'], self.data['T']),
+        #                           EOS.P_fst_EOS(self.data['rho'], self.data['T']))
+        # self.data['S'] = np.where(self.iron_mask, EOS.S_iron_EOS(self.data['rho'], self.data['T']),
+        #                           EOS.S_fst_EOS(self.data['rho'], self.data['T']))
+        # self.calculate_EOS()
 
         return True
 
@@ -514,8 +530,11 @@ class photosphere:
 if __name__ == '__main__':
 
     snap = snapshot('snapshots/basic_twin/snapshot_0411.hdf5')
-    phot = photosphere(snap, resolution=500, n_theta=40, max_size=50*Rearth)
+    phot = photosphere(snap, resolution=500, n_theta=40, max_size=100*Rearth)
     phot.get_photosphere()
+    phot.plot('T', plot_photosphere=True, round_to=1000, log=False, val_max=8000)
+    phot.initial_cool_v2(1e5)
+    phot.plot('T', plot_photosphere=True, round_to=1000, log=False, val_max=8000)
 
     while phot.initial_cool_v2(1e5):
         pass
@@ -524,7 +543,7 @@ if __name__ == '__main__':
     phot.get_photosphere()
     phot.plot('T', plot_photosphere=True, round_to=1000, log=False, val_max=8000)
 
-    t, L = phot.long_term_evolution(400, 1e7)
+    t, L = phot.long_term_evolution(200, 1e7)
 
     plt.plot(t, L)
     plt.show()

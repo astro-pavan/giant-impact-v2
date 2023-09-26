@@ -54,13 +54,13 @@ P_critical_point, S_critical_point = NewEOS.cp.P * 1e9, NewEOS.cp.S * 1e6
 # EQUATION OF STATE CALCULATIONS HERE #
 
 method = 'linear'
-u_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.U.T, method=method, bounds_error=False, fill_value=np.NaN)
-P_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.P.T, method=method, bounds_error=False, fill_value=np.NaN)
-S_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.S.T, method=method, bounds_error=False, fill_value=np.NaN)
-cs_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.cs.T, method=method, bounds_error=False, fill_value=np.NaN)
+u_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.U.T, method=method, bounds_error=False, fill_value=None)
+P_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.P.T, method=method, bounds_error=False, fill_value=None)
+S_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.S.T, method=method, bounds_error=False, fill_value=None)
+cs_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.cs.T, method=method, bounds_error=False, fill_value=None)
 rho_interp, T_interp = lambda x: np.full_like(x, np.NaN), lambda x: np.full_like(x, np.NaN)
 T2_interp = lambda x: np.full_like(x, np.NaN)
-S_range, log_P_range = [1000, 20000], [-4, 13]
+S_range, log_P_range = [1000, 20000], [-6, 13]
 
 
 def globalize(func):
@@ -177,8 +177,8 @@ def generate_table_S_P(load_from_file=False, n=10):
         plt.colorbar()
         plt.show()
 
-    rho_interp = RegularGridInterpolator((S, logP), rho_table.T, method=method, bounds_error=False, fill_value=np.NaN)
-    T_interp = RegularGridInterpolator((S, logP), T_table.T, method=method, bounds_error=False, fill_value=np.NaN)
+    rho_interp = RegularGridInterpolator((S, logP), rho_table.T, method=method, bounds_error=False, fill_value=None)
+    T_interp = RegularGridInterpolator((S, logP), T_table.T, method=method, bounds_error=False, fill_value=None)
 
 
 def generate_table_u_rho(load_from_file=False, n=10):
@@ -229,7 +229,7 @@ def generate_table_u_rho(load_from_file=False, n=10):
         # plt.contour(u, log_rho, np.log10(error_table), [-1, 0], colors='black')
         # plt.show()
 
-    T2_interp = RegularGridInterpolator((u, log_rho), T_table, method=method, bounds_error=False, fill_value=np.NaN)
+    T2_interp = RegularGridInterpolator((u, log_rho), T_table, method=method, bounds_error=False, fill_value=None)
 
 
 def make_into_pair_array(arr1, arr2):
@@ -318,11 +318,11 @@ def EOS(rho=None, T=None, P=None, S=None, u=None, check=False):
 
 if __name__ == '__main__':
     woma.load_eos_tables(['ANEOS_forsterite'])
-    generate_table_u_rho(load_from_file=False, n=200)
-    generate_table_S_P(load_from_file=False, n=200)
+    generate_table_u_rho(load_from_file=False, n=800)
+    generate_table_S_P(load_from_file=False, n=400)
 else:
-    generate_table_u_rho(load_from_file=True, n=200)
-    generate_table_S_P(load_from_file=True, n=200)
+    generate_table_u_rho(load_from_file=True, n=800)
+    generate_table_S_P(load_from_file=True, n=400)
 
 # PHASE CALCULATIONS HERE #
 

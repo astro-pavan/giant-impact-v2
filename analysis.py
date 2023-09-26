@@ -83,8 +83,8 @@ impact_parameter = np.array([0.5,
 v_impact = np.sqrt(v_impact_x ** 2 + v_impact_z ** 2)
 Q_prime = modified_specific_impact_energy(m_target, m_impactor, v_impact, impact_parameter)
 
-indexes = [0, 1, 2, 3, 4, 5, 6, 8, 9]
-missing_or_errors = [7, 10]
+indexes = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+missing_or_errors = [10]
 
 
 def get_filename(i, i_time):
@@ -97,49 +97,73 @@ def luminosity_plots():
     AM = np.zeros_like(Q_prime)
     SAM = np.zeros_like(Q_prime)
 
-    for i in indexes:
+    light_curve = []
+    time = []
+
+    for i in [0, 1, 2, 3, 4]:
         filename = get_filename(i, 4)
         snap = snapshot(filename)
+
         phot = photosphere(snap, 12 * Rearth, 50 * Rearth, 400, n_theta=20)
         phot.set_up()
-        phot.plot('alpha')
+        # phot.plot('alpha')
         L[i] = phot.luminosity / L_sun
-        time, lum, m = phot.long_term_evolution()
+        t, lum, A, R, T, m = phot.long_term_evolution()
+        light_curve.append(lum)
+        time.append(t)
         AM[i] = snap.total_angular_momentum
         SAM[i] = snap.total_specific_angular_momentum
 
-    plt.scatter(Q_prime, L)
-    plt.xscale('log')
-    plt.yscale('log')
-    plt.xlabel('Modified specific Impact Energy (J/kg)')
-    plt.ylabel('Luminosity ($L_{\odot}$)')
 
-    plt.savefig('figures/QL_plot.png', bbox_inches='tight')
-    plt.savefig('figures/QL_plot.pdf', bbox_inches='tight')
-    plt.close()
+    # target mass
+    change_mass_indexes = [0, 1, 2, 3, 4]
+    for i in change_mass_indexes:
+        plt.plot(time[i] / yr, light_curve[i] / L_sun, label=f'Target mass = {m_target[i] / Mearth:.2f}' + '$M_{\oplus}$')
+    plt.xlabel('Time (yr)')
+    plt.ylabel('Luminosity ($L_{\odot}$)')
+    plt.legend()
+    plt.show()
+
+    # plt.scatter(Q_prime, L)
+    # plt.xscale('log')
+    # plt.yscale('log')
+    # plt.xlabel('Modified specific Impact Energy (J/kg)')
+    # plt.ylabel('Luminosity ($L_{\odot}$)')
+    #
+    # plt.savefig('figures/QL_plot.png', bbox_inches='tight')
+    # plt.savefig('figures/QL_plot.pdf', bbox_inches='tight')
+    # plt.close()
 
 
 def single_analysis(i):
 
     filename = get_filename(i, 4)
     snap = snapshot(filename)
-    phot = photosphere(snap, 12 * Rearth, 50 * Rearth, 1000, n_theta=100)
+    # s = gas_slice(snap, size=8)
+    # s.full_plot()
+    phot = photosphere(snap, 12 * Rearth, 60 * Rearth, 500, n_theta=40)
 
-    phot.plot('rho', plot_photosphere=True)
-    phot.plot('T', log=False, round_to=1000, plot_photosphere=True, val_max=8000)
-    phot.plot('P', plot_photosphere=True)
-    phot.plot('s', log=False, round_to=1000, plot_photosphere=True)
+    # phot.plot('rho', plot_photosphere=True)
+    # phot.plot('T', log=False, round_to=1000, plot_photosphere=True, val_max=8000)
+    # phot.plot('P', plot_photosphere=True)
+    # phot.plot('s', log=False, round_to=1000, plot_photosphere=True)
 
     phot.set_up()
 
-    phot.plot('rho', plot_photosphere=True)
-    phot.plot('T', log=False, round_to=1000, plot_photosphere=True, val_max=8000)
-    phot.plot('P', plot_photosphere=True)
-    phot.plot('s', log=False, round_to=1000, plot_photosphere=True)
-    phot.plot('tau', plot_photosphere=True)
+    # phot.plot('rho', plot_photosphere=True)
+    # phot.plot('T', log=False, round_to=1000, plot_photosphere=True, val_max=8000)
+    #phot.plot('P', plot_photosphere=True)
+    # phot.plot('s', log=False, round_to=1000, plot_photosphere=True)
+    # phot.plot('tau', plot_photosphere=True)
 
-    time, lum, m = phot.long_term_evolution()
+    time, lum, A, R, T, m = phot.long_term_evolution(plot=False, plot_interval=100)
     plt.plot(time / yr, lum / L_sun)
+    plt.show()
+
+    plt.plot(time / yr, R)
+    plt.show()
+
+    plt.plot(time / yr, A)
     plt.show()
 
 
@@ -192,7 +216,7 @@ def phase_diagram(filename):
     z = np.log10(fst.alpha(rho, T, y, x))
     z = np.where(np.isfinite(z), z, np.NaN)
     plt.figure(figsize=(13, 9))
-    plt.contourf(x, y, z, 200, cmap='plasma')
+    plt.contourf(x, y, z, 200, cmap='viridis')
     cbar = plt.colorbar(label='$\log_{10}$[' + data_labels['alpha'] + ']')
 
     tick_positions = np.arange(np.ceil(np.nanmin(z)), np.ceil(np.nanmax(z)), 2)
@@ -203,8 +227,8 @@ def phase_diagram(filename):
     plt.ylabel(data_labels['P'])
     plt.plot(fst.NewEOS.vc.Sl, fst.NewEOS.vc.Pl, 'w-', label='Vapor Dome')
     plt.plot(fst.NewEOS.vc.Sv, fst.NewEOS.vc.Pv, 'w-')
+    plt.vlines(fst.S_critical_point, fst.P_critical_point, 1e9, colors='white')
     plt.scatter(fst.S_critical_point, fst.P_critical_point, c='white', label='Critical Point')
-    plt.legend(loc='lower left')
     plt.xlim([4000, 12000])
     plt.ylim([1e1, 1e9])
     plt.annotate('Liquid', (4200, 1e8), c='white')
@@ -213,12 +237,11 @@ def phase_diagram(filename):
 
     snap = snapshot(filename)
     phot = photosphere(snap, 12 * Rearth, 35 * Rearth, 600, n_theta=40)
-    #phot.analyse()
 
     S, P = phot.data['s'][20, :], phot.data['P'][20, :]
-    plt.plot(S, P, 'k--')
+    plt.plot(S, P, color='black', linestyle='--', label='Thermal profile with droplets')
 
-    rad = np.array([2, 4, 6, 8, 10, 12, 16, 20, 30])
+    rad = np.array([2, 4, 6, 8, 10, 12, 15, 20, 30])
     r_labels = []
     S_points, P_points = np.zeros_like(rad), np.zeros_like(rad)
     for i in range(len(rad)):
@@ -228,8 +251,14 @@ def phase_diagram(filename):
 
     plt.scatter(S_points, P_points, color='black', s=8, marker='o')
     for j in range(len(rad)):
-        plt.annotate(r_labels[j], (S_points[j], P_points[j]), xytext=(-37, -5), textcoords='offset points', color='black')
+        plt.annotate(r_labels[j], (S_points[j], P_points[j]), xytext=(-37, -5), textcoords='offset points',
+                     color='black')
 
+    phot.remove_droplets()
+    S, P = phot.data['s'][20, :], phot.data['P'][20, :]
+    plt.plot(S, P, color='red', linestyle='-.', label='Thermal profile without droplets')
+
+    plt.legend(loc='lower left')
     plt.savefig('figures/phase_diagram.png', bbox_inches='tight')
     plt.savefig('figures/phase_diagram.pdf', bbox_inches='tight')
     plt.close()
@@ -241,7 +270,7 @@ def make_table():
         print(f'{m_target[i]/Mearth:.1f} & {impact_parameter[i]:.1f} & {mass_ratio[i]:.2f} & {v_over_v_esc[i]:.1f} & LUM \\\\')
 
 
-single_analysis(10)
+single_analysis(0)
 
 # 0 is unstable with HSE (problem with entropy extrapolation) and long term evolution
 
@@ -252,6 +281,7 @@ single_analysis(10)
 
 # 5 has problems with long term evolution (its so dim it may not even be worth it)
 # 6 has weird evolution
+# 7 has problems with long term evolution
 
 # 8 has issues with evolution
 # 9 has problems with long term evolution

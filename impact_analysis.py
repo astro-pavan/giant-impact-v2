@@ -99,30 +99,50 @@ def luminosity_plots():
 
     light_curve = []
     time = []
+    t_half = np.zeros_like(Q_prime)
+    t_tenth = np.zeros_like(Q_prime)
 
-    for i in [0, 1, 2, 3, 4]:
+    for i in [1, 2, 0, 3, 4]:
         filename = get_filename(i, 4)
         snap = snapshot(filename)
 
-        phot = photosphere(snap, 12 * Rearth, 50 * Rearth, 400, n_theta=20)
+        phot = photosphere(snap, 12 * Rearth, 60 * Rearth, 400, n_theta=20)
         phot.set_up()
-        # phot.plot('alpha')
         L[i] = phot.luminosity / L_sun
-        t, lum, A, R, T, m = phot.long_term_evolution()
+        t, lum, A, R, T, m, t2, t10 = phot.long_term_evolution()
         light_curve.append(lum)
         time.append(t)
         AM[i] = snap.total_angular_momentum
         SAM[i] = snap.total_specific_angular_momentum
-
+        t_half[i] = t2
+        t_tenth[i] = t10
 
     # target mass
-    change_mass_indexes = [0, 1, 2, 3, 4]
+    change_mass_indexes = [1, 2, 0, 3, 4]
     for i in change_mass_indexes:
-        plt.plot(time[i] / yr, light_curve[i] / L_sun, label=f'Target mass = {m_target[i] / Mearth:.2f}' + '$M_{\oplus}$')
+        plt.plot(time[i] / yr, light_curve[i] / L_sun, label=f'Total mass = {(m_target[i] + m_impactor[i]) / Mearth:.2f}' + '$M_{\oplus}$')
     plt.xlabel('Time (yr)')
     plt.ylabel('Luminosity ($L_{\odot}$)')
     plt.legend()
-    plt.show()
+    plt.xlim([0, 40])
+    plt.savefig('figures/mass_light_curve_very_long.pdf', bbox_inches='tight')
+    plt.savefig('figures/mass_light_curve_very_long.png', bbox_inches='tight')
+    plt.xlim([0, 5])
+    plt.savefig('figures/mass_light_curve_long.pdf', bbox_inches='tight')
+    plt.savefig('figures/mass_light_curve_long.png', bbox_inches='tight')
+    plt.xlim([0, 1])
+    plt.savefig('figures/mass_light_curve_short.pdf', bbox_inches='tight')
+    plt.savefig('figures/mass_light_curve_short.png', bbox_inches='tight')
+
+    plt.close()
+
+    total_mass = m_target + m_impactor
+
+    plt.scatter(total_mass / Mearth, t_half / yr)
+    plt.xlabel('Total_mass ($M_{\oplus}$)')
+    plt.ylabel('$t_{1/2}$ (yr)')
+    plt.savefig('figures/mass_timescales.pdf', bbox_inches='tight')
+    plt.savefig('figures/mass_timescales.png', bbox_inches='tight')
 
     # plt.scatter(Q_prime, L)
     # plt.xscale('log')
@@ -139,8 +159,8 @@ def single_analysis(i):
 
     filename = get_filename(i, 4)
     snap = snapshot(filename)
-    # s = gas_slice(snap, size=8)
-    # s.full_plot()
+    s = gas_slice(snap, size=20)
+    s.full_plot()
     phot = photosphere(snap, 12 * Rearth, 60 * Rearth, 500, n_theta=40)
 
     # phot.plot('rho', plot_photosphere=True)
@@ -150,13 +170,13 @@ def single_analysis(i):
 
     phot.set_up()
 
-    # phot.plot('rho', plot_photosphere=True)
+    phot.plot('rho', plot_photosphere=True)
     # phot.plot('T', log=False, round_to=1000, plot_photosphere=True, val_max=8000)
-    #phot.plot('P', plot_photosphere=True)
+    # phot.plot('P', plot_photosphere=True)
     # phot.plot('s', log=False, round_to=1000, plot_photosphere=True)
-    # phot.plot('tau', plot_photosphere=True)
+    phot.plot('tau', plot_photosphere=True)
 
-    time, lum, A, R, T, m = phot.long_term_evolution(plot=False, plot_interval=100)
+    time, lum, A, R, T, m, t_half, t_tenth = phot.long_term_evolution(plot=True, plot_interval=100)
     plt.plot(time / yr, lum / L_sun)
     plt.show()
 
@@ -164,6 +184,9 @@ def single_analysis(i):
     plt.show()
 
     plt.plot(time / yr, A)
+    plt.show()
+
+    plt.plot(time / yr, T)
     plt.show()
 
 
@@ -263,26 +286,17 @@ def phase_diagram(filename):
     plt.savefig('figures/phase_diagram.pdf', bbox_inches='tight')
     plt.close()
 
-
-def make_table():
     for i in range(len(m_target)):
         mass_ratio = m_impactor / m_target
         print(f'{m_target[i]/Mearth:.1f} & {impact_parameter[i]:.1f} & {mass_ratio[i]:.2f} & {v_over_v_esc[i]:.1f} & LUM \\\\')
 
 
-single_analysis(0)
+single_analysis(10)
 
-# 0 is unstable with HSE (problem with entropy extrapolation) and long term evolution
+# 5 is too dim
+# 6 doesn't work
+# 7 seems ok
 
-# 1 has problems with long term evolution
-# 2 has an issue with late stage time evolution
-# 3 has some odd spikes in evolution
-# 4 has similar spikes
-
-# 5 has problems with long term evolution (its so dim it may not even be worth it)
-# 6 has weird evolution
-# 7 has problems with long term evolution
-
-# 8 has issues with evolution
-# 9 has problems with long term evolution
-# 10 breaks at entropy extrapolation
+# 8 seems ok
+# 9 also works
+# 10 is unbound

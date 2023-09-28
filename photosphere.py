@@ -626,7 +626,7 @@ class photosphere:
 
         return True
 
-    def long_term_evolution(self, total_time=40, div=40, plot=False, plot_interval=10):
+    def long_term_evolution(self, total_time=40, div=20, plot=False, plot_interval=10):
 
         self.verbose = False
 

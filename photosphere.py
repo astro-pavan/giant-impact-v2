@@ -22,11 +22,11 @@ sigma = 5.670374419e-8
 L_sun = 3.828e26
 R_earth = 6371000
 M_earth = 5.972e24
-yr = 3.15e7
 day = 3600 * 24
+yr = 365.25 * day
 silicate_latent_heat_v = 3e7
 photosphere_depth = 2/3
-pressure_shell = 1e14
+pressure_shell = 1e20
 outer_shell_depth = 1e-7
 pi = np.pi
 cos = lambda theta: np.cos(theta)
@@ -537,12 +537,22 @@ class photosphere:
         u_avg_in = E_in / m_in
         du_in = dE_in / m_in
         k = (1 - du_in / u_avg_in) if m_in > 0 else 1
-        assert 0 < k <= 1
+        assert k <= 1
+        k = np.maximum(k, 0.1)
         u2_in = u1 * k
 
         t_cool_estimated = E_in / self.luminosity
 
-        assert dt < t_cool_estimated or m_in == 0
+        # assert dt < t_cool_estimated or m_in == 0
+        r = self.data['r']
+        r_phot = self.R_photosphere
+        equilibrium_temp = (0.5 ** 0.25) * ((r_phot / r) ** 0.5) * self.T_photosphere
+        equilibrium_temp = np.where(~photosphere_mask & (r > r_phot), equilibrium_temp, np.nan)
+        # test = np.sign(self.data['T'] - equilibrium_temp)
+        # plt.imshow(test)
+        # plt.show()
+        # self.data['test'] = test
+        # self.plot('test', log=False, round_to=1, plot_photosphere=True)
 
         self.data['u'] = np.where(pressure_mask, u2_in, u1)
         self.data['T'] = fst.T2_EOS(self.data['u'], self.data['rho'])
@@ -616,7 +626,7 @@ class photosphere:
 
         return True
 
-    def long_term_evolution(self, n=200, dt=1e7, plot=False, plot_interval=10):
+    def long_term_evolution(self, total_time=40, div=40, plot=False, plot_interval=10):
 
         self.verbose = False
 
@@ -630,8 +640,8 @@ class photosphere:
         E_in = np.sum(self.data['E'][(self.data['tau'] > photosphere_depth) & (self.data['P'] < pressure_shell)])
         t_cool_estimated = E_in / self.luminosity
         print(f'Estimated cooling time: {t_cool_estimated:.1e} seconds ({t_cool_estimated / yr:.2f} years)')
-        dt = t_cool_estimated / 20
-        t_max = 20 * yr
+        dt = t_cool_estimated / div
+        t_max = total_time * yr
         n = int(t_max / dt)
 
         print(f'Cooling for {n * dt:.1e} seconds ({n * dt / yr:.2f} years):')
@@ -639,7 +649,7 @@ class photosphere:
         for i in tqdm(range(1, n + 1)):
             self.nan_check()
             self.cool_step(dt)
-            #total_mass_loss += self.remove_droplets()
+            total_mass_loss += self.remove_droplets()
             #self.nan_check()
 
             if i % plot_interval == 0 and plot:
@@ -655,9 +665,14 @@ class photosphere:
         t = np.array(t)
         L, A, R, T = np.array(L), np.array(A), np.array(R), np.array(T)
 
+        i_half = np.argmin((L / L[0]) > 0.5)
+        i_tenth = np.argmin((L / L[0]) > 0.1)
+        t_half = t[i_half]
+        t_tenth = t[i_tenth]
+
         self.verbose = True
 
-        return t, L, A, R, T, total_mass_loss
+        return t, L, A, R, T, total_mass_loss, t_half, t_tenth
 
     def set_up(self):
 
@@ -714,11 +729,11 @@ if __name__ == '__main__':
     phot = photosphere(snap, n_theta=50)
     phot.set_up()
 
-    t1, L1, A1, R1, T1, m1 = phot.long_term_evolution(dt=2e6, n=800, plot=False, plot_interval=40)
+    t1, L1, A1, R1, T1, m1 = phot.long_term_evolution(plot=False, plot_interval=40)
 
     phot2 = photosphere(snap, n_theta=50)
     phot2.set_up()
-    t2, L2, A2, R2, T2, m2 = phot2.long_term_evolution(dt=1e7, n=160, plot=False, plot_interval=40)
+    t2, L2, A2, R2, T2, m2 = phot2.long_term_evolution(plot=False, plot_interval=40)
 
     plt.plot(t1 / yr, L1 / L_sun)
     plt.plot(t2 / yr, L2 / L_sun)

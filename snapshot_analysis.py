@@ -17,7 +17,8 @@ from scipy.optimize import curve_fit
 data_labels = {
     "z": "z ($R_{\oplus}$)",
     "R": "R ($R_{\oplus}$)",
-    "rho": "Density ($g/cm^{3}$)",
+    "r": "R ($R_{\oplus}$)",
+    "rho": "Density ($kg/cm^{3}$)",
     "T": "Temperature (K)",
     "T2": "Temperature (K)",
     "P": "Pressure (Pa)",
@@ -54,7 +55,7 @@ colormaps = {
     "rho": "magma",
     "T": "coolwarm",
     "P": "plasma",
-    "S": "viridis",
+    "s": "viridis",
     "omega": "inferno",
     "alpha": "magma",
     "phase": "magma",
@@ -289,6 +290,8 @@ class snapshot:
     # analyses the rotation of the particles to produce a best fit rotation curve
     def rotational_analysis(self, plot_output=False, save=False):
 
+        self.R_xy.convert_to_mks()
+
         # gets the particles in a valid region and takes the log of the cylindrical radius and angular velocity
         midplane_mask = (np.abs(self.z) < 0.5 * Rearth) & (self.R_xy < self.HD_limit_R)
         log_R, log_omega = np.log10(self.R_xy[midplane_mask]), np.log10(self.data.gas.angular_velocity[midplane_mask])
@@ -306,7 +309,7 @@ class snapshot:
 
         # fits the particle rotation to the model
         try:
-            fit = curve_fit(two_lines, log_R, log_omega, p0=(-3.3, 0, 1.8))
+            fit = curve_fit(two_lines, log_R, log_omega, p0=(-3.3, 7.0, 2.0))
             a0, b0, c0 = fit[0][0], fit[0][1], fit[0][2]
         except TypeError:
             print('ERROR: UNABLE TO MODEL OMEGA')
@@ -314,13 +317,13 @@ class snapshot:
 
         # rotation curve function (uses unyt)
         def best_fit(R):
-            R.convert_to_units(Rearth)
+            R.convert_to_units(m)
             return (10 ** (two_lines(np.log10(R.value), a0, b0, c0))) * (s ** -1)
 
         def best_fit_mks(R):
-            return (10 ** (two_lines(np.log10(R * 6371000), a0, b0, c0)))
+            return 10 ** (two_lines(np.log10(R), a0, b0, c0))
 
-        CoRoL = b0 * Rearth
+        CoRoL = b0 * m
 
         omega_keplerian = lambda R: np.sqrt((6.674e-11 * (self.total_mass.value / 5.9722e24)) / ((R * 6371000) ** 3))
 
@@ -419,7 +422,7 @@ class gas_slice:
         try:
             self.data['T'] = get_slice("temperatures")
             self.data['P'] = get_slice("pressures")
-            self.data['S'] = get_slice("entropy")
+            self.data['s'] = get_slice("entropy")
             self.data['omega'] = get_slice("angular_velocity")
             self.data['v_r'] = get_slice("radial_velocity")
             self.data['u'] = get_slice("internal_energies")
@@ -430,7 +433,7 @@ class gas_slice:
 
     def ticks(self):
 
-        factor = 10 ** (int(np.log10(self.size)) - 1)
+        factor = 10 ** (np.floor(np.log10(self.size)) - 1)
 
         a = int(self.size / 2)
         x_tick_pos, x_tick_label = [], []
@@ -453,7 +456,7 @@ class gas_slice:
         return x_tick_pos, x_tick_label, y_tick_pos, y_tick_label
 
     # plots a heatmap for a certain parameter
-    def plot(self, parameter, show=True, save=None, log=True, threshold=None, ax=None, colorbar=True):
+    def plot(self, parameter, show=True, save=None, log=True, threshold=None, ax=None, colorbar=True, curve=None, curve_label=''):
 
         if ax is None:
             fig, ax = plt.subplots()
@@ -478,10 +481,19 @@ class gas_slice:
         ax.tick_params(axis="x", direction="in", color="white")
         ax.tick_params(axis="y", direction="in", color="white")
 
+        if curve is not None:
+            x_px = curve[0] * self.pixels_per_Rearth + self.resolution / 2
+            y_px = curve[1] * self.pixels_per_Rearth + self.resolution / 2
+            ax.plot(x_px, y_px, 'w--', label=curve_label)
+            ax.legend()
+
         if save is not None:
-            plt.savefig(save, bbox_inches='tight')
+            plt.savefig(f'figures/{save}.png', bbox_inches='tight')
+            plt.savefig(f'figures/{save}.pdf', bbox_inches='tight')
+            plt.close()
         if show:
             plt.show()
+            plt.close()
 
         return ax
 

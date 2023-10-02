@@ -456,7 +456,7 @@ class gas_slice:
         return x_tick_pos, x_tick_label, y_tick_pos, y_tick_label
 
     # plots a heatmap for a certain parameter
-    def plot(self, parameter, show=True, save=None, log=True, threshold=None, ax=None, colorbar=True):
+    def plot(self, parameter, show=True, save=None, log=True, threshold=None, ax=None, colorbar=True, curve=None, curve_label=''):
 
         if ax is None:
             fig, ax = plt.subplots()
@@ -481,10 +481,19 @@ class gas_slice:
         ax.tick_params(axis="x", direction="in", color="white")
         ax.tick_params(axis="y", direction="in", color="white")
 
+        if curve is not None:
+            x_px = curve[0] * self.pixels_per_Rearth + self.resolution / 2
+            y_px = curve[1] * self.pixels_per_Rearth + self.resolution / 2
+            ax.plot(x_px, y_px, 'w--', label=curve_label)
+            ax.legend()
+
         if save is not None:
-            plt.savefig(save, bbox_inches='tight')
+            plt.savefig(f'figures/{save}.png', bbox_inches='tight')
+            plt.savefig(f'figures/{save}.pdf', bbox_inches='tight')
+            plt.close()
         if show:
             plt.show()
+            plt.close()
 
         return ax
 

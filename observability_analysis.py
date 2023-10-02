@@ -16,6 +16,10 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm, SymLogNorm
+from astroquery.gaia import Gaia
+from astropy.table import Table
+from gaiaxpy import generate, PhotometricSystem
+from scipy.optimize import curve_fit
 
 sun_g_band_app_mag = -26.895 # from Casagrande (2018)
 sun_dist_pc = 1.495e+11 / 3.086e+16 # 1 AU in parsecs
@@ -151,17 +155,8 @@ def gaia_HR():
     gaia_data = gaia_data[gaia_data['parallax'].notna()]
     gaia_data['parallax'] = np.abs(gaia_data['parallax'])
 
-    # np.log10(np.abs(gaia_data['parallax_over_error'])).hist(bins=200)
-    # plt.show()
-    #
-    np.log10(gaia_data['phot_g_mean_flux_over_error']).hist(bins=200)
+    np.log10(np.abs(gaia_data['parallax_over_error'])).hist(bins=200)
     plt.show()
-    #
-    # np.log10(gaia_data['phot_bp_mean_flux_over_error']).hist(bins=200)
-    # plt.show()
-    #
-    # np.log10(gaia_data['phot_rp_mean_flux_over_error']).hist(bins=200)
-    # plt.show()
 
     gaia_data = gaia_data[gaia_data['parallax_over_error'] > 3]
     # gaia_data = gaia_data[gaia_data['phot_g_mean_flux_over_error'] > 50]
@@ -174,12 +169,123 @@ def gaia_HR():
 
     gaia_data['abs_g_mag'] = abs_mag(gaia_data['phot_g_mean_mag'], gaia_data['parallax'] * 1e-3)
 
-    plt.hist2d(gaia_data['phot_g_mean_mag'], np.log10(gaia_data['phot_g_mean_flux_over_error']), bins=200, cmap='inferno', norm=SymLogNorm(10))
+    plt.hist2d(gaia_data['phot_g_mean_mag'], np.log10(gaia_data['phot_g_mean_flux_over_error']), bins=400, cmap='inferno')
     # plt.gca().invert_yaxis()
     plt.gca().invert_xaxis()
     # plt.ylim([15, 0])
     plt.show()
 
 
-gaia_HR()
+def gaia_epoch_photometry():
 
+    query = "SELECT TOP 1000 gaia_source.source_id,gaia_source.ra,gaia_source.dec,gaia_source.parallax,gaia_source.parallax_error,gaia_source.parallax_over_error,gaia_source.ruwe,gaia_source.phot_g_n_obs,gaia_source.phot_g_mean_flux,gaia_source.phot_g_mean_flux_error,gaia_source.phot_g_mean_flux_over_error,gaia_source.phot_g_mean_mag,gaia_source.phot_bp_n_obs,gaia_source.phot_bp_mean_flux_error,gaia_source.phot_bp_mean_flux_over_error,gaia_source.phot_rp_n_obs,gaia_source.phot_rp_mean_flux_error,gaia_source.phot_rp_mean_flux_over_error,gaia_source.bp_rp,gaia_source.radial_velocity,gaia_source.phot_variable_flag,gaia_source.non_single_star,gaia_source.has_xp_continuous,gaia_source.has_epoch_photometry,gaia_source.has_mcmc_gspphot,gaia_source.has_mcmc_msc,gaia_source.teff_gspphot,gaia_source.teff_gspphot_lower,gaia_source.teff_gspphot_upper,gaia_source.logg_gspphot,gaia_source.mh_gspphot,gaia_source.distance_gspphot,gaia_source.azero_gspphot,gaia_source.ag_gspphot,gaia_source.ebpminrp_gspphot\n" +\
+            "FROM gaiadr3.gaia_source\n" +\
+            "WHERE has_epoch_photometry = 'True'"
+
+    job = Gaia.launch_job_async(query)
+    results = job.get_results()
+    print(f'Table size (rows): {len(results)}')
+
+    retrieval_type = 'EPOCH_PHOTOMETRY'  # Options are: 'EPOCH_PHOTOMETRY', 'MCMC_GSPPHOT', 'MCMC_MSC', 'XP_SAMPLED', 'XP_CONTINUOUS', 'RVS', 'ALL'
+    data_structure = 'INDIVIDUAL'  # Options are: 'INDIVIDUAL', 'COMBINED', 'RAW'
+    data_release = 'Gaia DR3'  # Options are: 'Gaia DR3' (default), 'Gaia DR2'
+
+    datalink = Gaia.load_data(ids=results['source_id'], data_release=data_release, retrieval_type=retrieval_type,
+                              data_structure=data_structure, verbose=False, output_file=None)
+    dl_keys = [inp for inp in datalink.keys()]
+    dl_keys.sort()
+
+    mag, mean, single = [], [], []
+
+    for dl_key in dl_keys:
+        data_table = datalink[dl_key][0].to_table()
+        data_table = Table(data_table)
+
+        source_id = data_table['source_id'][0]
+
+        entry = results[results['source_id'] == source_id]
+        g_mag = entry['phot_g_mean_mag'][0]
+        flux = entry['phot_g_mean_flux'][0]
+        flux_error = entry['phot_g_mean_flux_error'][0]
+        mean_flux_frac_error = 1 / entry['phot_g_mean_flux_over_error'][0]
+
+        G_band_filter = data_table['band'] == 'G'
+
+        single_flux_frac_error = 1 / np.mean(data_table['flux_over_error'][G_band_filter])
+
+        mag.append(g_mag)
+        mean.append(mean_flux_frac_error)
+        single.append(single_flux_frac_error)
+
+    mag = np.array(mag)
+    single = np.array(single)
+
+    def model(x, e1, b, m1):
+        return np.maximum(e1 * 10 ** (b * (x - m1)), 10 ** -3.2)
+
+    fit = curve_fit(model, mag, single, p0=(1e-3, 0.25, 14))
+    e1, b, m1 = fit[0][0], fit[0][1], fit[0][2]
+
+    error = lambda m: model(m, e1, b, m1)
+    x = np.linspace(10, 22)
+    y = error(x)
+
+    plt.hist2d(mag, np.log10(single), bins=100, cmap='cividis', norm=SymLogNorm(10))
+    plt.plot(x, np.log10(y), 'r--')
+    plt.xlabel('Apparent magnitude (G-band)')
+    plt.ylabel('$\log_{10}$[Mean fractional error on single flux measurement]')
+    plt.gca().invert_xaxis()
+    plt.show()
+
+    gaia_data = pd.read_csv('gaia_data.csv')
+
+    initial_n = len(gaia_data)
+
+    gaia_data = gaia_data[gaia_data['phot_g_mean_mag'].notna()]
+    gaia_data = gaia_data[gaia_data['parallax'].notna()]
+    gaia_data['parallax'] = np.abs(gaia_data['parallax']) * 1e-3
+
+    gaia_data['abs_g_mag'] = abs_mag(gaia_data['phot_g_mean_mag'], gaia_data['parallax'])
+    gaia_data['abs_g_mag_error'] = (5 / np.log(10)) * (1 / gaia_data['parallax_over_error'])
+    gaia_data['abs_g_mag_lower'] = gaia_data['abs_g_mag'] - gaia_data['abs_g_mag_error']
+    gaia_data['abs_g_mag_upper'] = gaia_data['abs_g_mag'] + gaia_data['abs_g_mag_error']
+
+    mask = (gaia_data['abs_g_mag'] < 20) & (gaia_data['abs_g_mag'] > -10) & (gaia_data['parallax_over_error'] > 1)
+    gaia_data = gaia_data[mask]
+
+    filtered_n = len(gaia_data)
+
+    print(f'{filtered_n/initial_n:.2%} kept')
+
+    plt.hist(gaia_data['abs_g_mag'], histtype='step', bins=400, color='black', label='Mean')
+    plt.hist(gaia_data['abs_g_mag_lower'], histtype='step', bins=400, color='blue', label='Lower bound')
+    plt.hist(gaia_data['abs_g_mag_upper'], histtype='step', bins=400, color='red', label='Upper bound')
+    plt.legend()
+    plt.xlabel('Absolute magnitude (G-band)')
+    plt.show()
+
+    gaia_data['single_g_mag_error'] = error(gaia_data['phot_g_mean_mag'])
+
+    plt.hist(np.log10(gaia_data['single_g_mag_error']), bins=400, histtype='step', color='red')
+    plt.hist(- np.log10(gaia_data['phot_g_mean_flux_over_error']), bins=400, histtype='step', color='blue')
+    plt.show()
+
+
+def simulated_impact_photometry():
+
+    pc = 3.0857e16
+
+    def B(wavelength, T):
+        h = 6.62607015e-34
+        c = 299792458
+        kB = 1.380649e-23
+
+        return ((2 * h * c ** 2)/(wavelength ** 5)) * (1 / np.expm1((h*c)/(wavelength*kB*T)))
+
+    def spectrum(wavelength, T, A, distance):
+        return (np.pi * (A / (4*np.pi*distance)) * B(wavelength, T)) / 1.346109E-21
+
+    print(spectrum(500e-9, 3000, 4 * np.pi * ((20 * 6371000) ** 2), 10 * pc))
+
+
+simulated_impact_photometry()

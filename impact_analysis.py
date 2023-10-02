@@ -83,76 +83,114 @@ impact_parameter = np.array([0.5,
 v_impact = np.sqrt(v_impact_x ** 2 + v_impact_z ** 2)
 Q_prime = modified_specific_impact_energy(m_target, m_impactor, v_impact, impact_parameter)
 
-indexes = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
-missing_or_errors = [10]
-
 
 def get_filename(i, i_time):
     return f'{snapshot_path}{subpath[i]}{snapshot_names[i_time]}'
 
 
-def luminosity_plots():
+def light_curves():
 
-    L = np.zeros_like(Q_prime)
-    AM = np.zeros_like(Q_prime)
-    SAM = np.zeros_like(Q_prime)
+    indexes = [0, 1, 2, 3, 4, 7, 8, 9]
+
+    Q = Q_prime[indexes]
+    L0 = []
+    AM = []
+    SAM = []
 
     light_curve = []
     time = []
-    t_half = np.zeros_like(Q_prime)
-    t_tenth = np.zeros_like(Q_prime)
+    t_half = []
+    t_quarter = []
+    t_tenth = []
 
-    for i in [1, 2, 0, 3, 4]:
+    for i in indexes:
         filename = get_filename(i, 4)
         snap = snapshot(filename)
 
         phot = photosphere(snap, 12 * Rearth, 60 * Rearth, 400, n_theta=20)
         phot.set_up()
-        L[i] = phot.luminosity / L_sun
-        t, lum, A, R, T, m, t2, t10 = phot.long_term_evolution()
+        L0.append(phot.luminosity / L_sun)
+        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution_v2(save_name=f'impact{i}', plot=False, plot_interval=0.1)
         light_curve.append(lum)
         time.append(t)
-        AM[i] = snap.total_angular_momentum
-        SAM[i] = snap.total_specific_angular_momentum
-        t_half[i] = t2
-        t_tenth[i] = t10
+        AM.append(snap.total_angular_momentum)
+        SAM.append(snap.total_specific_angular_momentum)
+        t_half.append(t2)
+        t_quarter.append(t4)
+        t_tenth.append(t10)
 
-    # target mass
+    t_half = np.array(t_half)
+    t_quarter = np.array(t_quarter)
+    t_tenth = np.array(t_tenth)
+
+    plt.figure(figsize=(8, 6))
+
     change_mass_indexes = [1, 2, 0, 3, 4]
     for i in change_mass_indexes:
         plt.plot(time[i] / yr, light_curve[i] / L_sun, label=f'Total mass = {(m_target[i] + m_impactor[i]) / Mearth:.2f}' + '$M_{\oplus}$')
     plt.xlabel('Time (yr)')
     plt.ylabel('Luminosity ($L_{\odot}$)')
     plt.legend()
+
     plt.xlim([0, 40])
     plt.savefig('figures/mass_light_curve_very_long.pdf', bbox_inches='tight')
     plt.savefig('figures/mass_light_curve_very_long.png', bbox_inches='tight')
+
     plt.xlim([0, 5])
     plt.savefig('figures/mass_light_curve_long.pdf', bbox_inches='tight')
     plt.savefig('figures/mass_light_curve_long.png', bbox_inches='tight')
+
     plt.xlim([0, 1])
     plt.savefig('figures/mass_light_curve_short.pdf', bbox_inches='tight')
     plt.savefig('figures/mass_light_curve_short.png', bbox_inches='tight')
 
+    plt.xlim([0.01, 60])
+    plt.xscale('log')
+    plt.savefig('figures/mass_light_curve_log.pdf', bbox_inches='tight')
+    plt.savefig('figures/mass_light_curve_log.png', bbox_inches='tight')
+
     plt.close()
 
-    total_mass = m_target + m_impactor
+    total_mass = (m_target + m_impactor)[indexes]
 
-    plt.scatter(total_mass / Mearth, t_half / yr)
-    plt.xlabel('Total_mass ($M_{\oplus}$)')
-    plt.ylabel('$t_{1/2}$ (yr)')
+    plt.scatter(total_mass[change_mass_indexes] / Mearth, t_half[change_mass_indexes] / yr, label='$t_{1/2}$')
+    plt.scatter(total_mass[change_mass_indexes] / Mearth, t_quarter[change_mass_indexes] / yr, label='$t_{1/4}$')
+    plt.scatter(total_mass[change_mass_indexes] / Mearth, t_tenth[change_mass_indexes] / yr, label='$t_{1/10}$')
+    plt.xlabel('Total mass ($M_{\oplus}$)')
+    plt.ylabel('Time (yr)')
+
     plt.savefig('figures/mass_timescales.pdf', bbox_inches='tight')
     plt.savefig('figures/mass_timescales.png', bbox_inches='tight')
+    plt.close()
 
-    # plt.scatter(Q_prime, L)
-    # plt.xscale('log')
-    # plt.yscale('log')
-    # plt.xlabel('Modified specific Impact Energy (J/kg)')
-    # plt.ylabel('Luminosity ($L_{\odot}$)')
-    #
-    # plt.savefig('figures/QL_plot.png', bbox_inches='tight')
-    # plt.savefig('figures/QL_plot.pdf', bbox_inches='tight')
-    # plt.close()
+    plt.scatter(Q, L0)
+    plt.xscale('log')
+    plt.yscale('log')
+    plt.xlabel('Modified specific Impact Energy (J/kg)')
+    plt.ylabel('Luminosity ($L_{\odot}$)')
+
+    plt.scatter(total_mass, L0)
+    plt.xscale('log')
+    plt.yscale('log')
+    plt.xlabel('Modified specific Impact Energy (J/kg)')
+    plt.ylabel('Luminosity ($L_{\odot}$)')
+
+    plt.savefig('figures/QL_plot.png', bbox_inches='tight')
+    plt.savefig('figures/QL_plot.pdf', bbox_inches='tight')
+    plt.close()
+
+    for i in indexes:
+        mass_ratio = m_impactor / m_target
+        print(f'{m_target[i] / Mearth:.1f} &'
+              f' {impact_parameter[i]:.1f} &'
+              f' {mass_ratio[i]:.2f} &'
+              f' {v_over_v_esc[i]:.1f} &'
+              f' {L0[i] / L_sun:.1e} &'
+              f' {t_half[i] / yr:.2f}  \\\\')
+
+
+def luminosity_plots():
+    pass
 
 
 def single_analysis(i):
@@ -191,13 +229,13 @@ def single_analysis(i):
 
 
 def impact_plots():
-    # default impact
-    # change b (up and down?)
-    # change gamma
-    # change m (up and down?)
-    # 4-6 impacts shown
 
-    sims = [0, 8, 6, 4]
+    sims = [0, 2, 3, 6, 8]
+    labels = ['$M_{target}$ = 0.5 $M_{\oplus}$\n$\gamma$ = 1\nb = 0.5',
+              '$M_{target}$ $\\rightarrow$ 0.25 $M_{\oplus}$',
+              '$M_{target}$ $\\rightarrow$ 1.0 $M_{\oplus}$',
+              '$\gamma$ $\\rightarrow$ 0.5',
+              'b $\\rightarrow$ 0.1']
     rows, cols = len(sims), len(snapshot_names)
 
     fig, ax = plt.subplots(nrows=rows, ncols=cols, squeeze=False, sharey='row', sharex='col')
@@ -213,9 +251,8 @@ def impact_plots():
             if i != rows - 1:
                 ax[i, j].set_xlabel('')
                 ax[i, j].set_xticklabels([])
-            if j != 0:
-                ax[i, j].set_ylabel('')
-                ax[i, j].set_yticklabels([])
+            if j == 0:
+                ax[i, j].annotate(labels[i], (0.1, 0.7) if i == 0 else (0.1, 0.9), xycoords='axes fraction', color='white')
             if i == 0:
                 ax[i, j].set_title(f'T = {snapshot_times[j]:.1f} hrs')
 
@@ -228,10 +265,20 @@ def impact_plots():
 
 
 def example_extrapolation():
-    pass
+
+    filename = get_filename(3, 4)
+    snap = snapshot(filename)
+    s = gas_slice(snap, size=18)
+    R, theta = snap.HD_limit_R.value / 6371000, np.linspace(0, 2*np.pi, num=1000)
+    curve = [R*np.cos(theta), R*np.sin(theta)]
+    s.plot('rho', threshold=1e-6, save='density_floor', show=False, curve=curve, curve_label='Extrapolation point')
+    phot = photosphere(snap, 12 * Rearth, 60 * Rearth, 1600, n_theta=100)
+    phot.set_up()
+    phot.plot('P', plot_photosphere=True, save='P_extrapolation', val_min=100, val_max=1e10, ylim=[-25, 25], xlim=[0, 50], cmap='plasma')
 
 
 def phase_diagram(filename):
+
     S = np.linspace(2500, 12000, num=100)
     P = np.logspace(1, 9, num=100)
     x, y = np.meshgrid(S, P)
@@ -291,7 +338,7 @@ def phase_diagram(filename):
         print(f'{m_target[i]/Mearth:.1f} & {impact_parameter[i]:.1f} & {mass_ratio[i]:.2f} & {v_over_v_esc[i]:.1f} & LUM \\\\')
 
 
-single_analysis(10)
+light_curves()
 
 # 5 is too dim
 # 6 doesn't work

@@ -26,7 +26,7 @@ day = 3600 * 24
 yr = 365.25 * day
 silicate_latent_heat_v = 3e7
 photosphere_depth = 2/3
-pressure_shell = 1e20
+pressure_shell = 1e11
 outer_shell_depth = 1e-7
 pi = np.pi
 cos = lambda theta: np.cos(theta)
@@ -228,10 +228,20 @@ class photosphere:
 
         self.verbose = True
 
-    def plot(self, parameter, log=True, contours=None, cmap='turbo', plot_photosphere=False, limits=None, round_to=1, val_min=None, val_max=None):
+    def plot(self, parameter, log=True, contours=None, cmap='turbo', plot_photosphere=False, round_to=1,
+             val_min=None, val_max=None, save=None, xlim=None, ylim=None):
         vals = np.log10(self.data[parameter]) if log else self.data[parameter]
-        val_max = np.log10(val_max) if log and val_max is not None else val_max
-        val_min = np.log10(val_min) if log and val_min is not None else val_min
+
+        if val_min is None:
+            val_min = np.nanmin(vals)
+        elif log:
+            val_min = np.log10(val_min)
+
+        if val_max is None:
+            val_max = np.nanmax(vals)
+        elif log:
+            val_max = np.log10(val_max)
+
         R, z = self.data['R'] * m, self.data['z'] * m
         R.convert_to_units(Rearth)
         z.convert_to_units(Rearth)
@@ -242,22 +252,29 @@ class photosphere:
         # else:
         #     plt.contourf(R, z, vals, 200, cmap=cmap)
 
-        cs = plt.contourf(R, z, vals, 200, cmap=cmap, norm=Normalize(vmin=val_min, vmax=val_max))
+        levels = np.linspace(val_min, val_max, 200)
+
+        cs = plt.contourf(R, z, vals, levels, cmap=cmap, extend='both')
 
         cbar = plt.colorbar(mappable=cs, label=data_labels[parameter] if not log else '$\log_{10}$[' + data_labels[parameter] + ']')
         plt.xlabel(data_labels['R'])
         plt.ylabel(data_labels['z'])
-        if limits is not None:
-            plt.ylim(limits)
+
+        if xlim is not None:
+            plt.xlim(xlim)
+        if ylim is not None:
+            plt.ylim(ylim)
         
         if plot_photosphere:
-            plt.plot(self.R_phot / R_earth, self.z_phot / R_earth, 'r--')
+            plt.plot(self.R_phot / R_earth, self.z_phot / R_earth, 'r--', label='Photic surface')
         theta = np.linspace(0, np.pi)
-        plt.plot((self.R_min / R_earth) * np.sin(theta), (self.z_min / R_earth) * np.cos(theta), 'k--')
+        plt.plot((self.R_min / R_earth) * np.sin(theta), (self.z_min / R_earth) * np.cos(theta), 'w--', label='Extrapolation point')
+
+        plt.legend()
 
         vals = np.where(np.isfinite(vals), vals, np.NaN)
-        min_tick = np.ceil(np.nanmin(vals / round_to))
-        max_tick = np.ceil(np.nanmax(vals / round_to))
+        min_tick = np.ceil(val_min / round_to)
+        max_tick = np.ceil(val_max / round_to)
         try:
             tick_positions = np.arange(min_tick, max_tick) * round_to
             cbar.set_ticks(tick_positions)
@@ -268,7 +285,13 @@ class photosphere:
             cs = plt.contour(R, z, vals, contours, colors='black', linestyles='dashed')
             plt.clabel(cs, contours, colors='black')
 
-        plt.show()
+        if save is not None:
+            plt.savefig(f'figures/{save}.pdf', bbox_inches='tight')
+            plt.savefig(f'figures/{save}.png', bbox_inches='tight')
+        else:
+            plt.show()
+
+        plt.close()
 
     def get_index(self, r, theta):
         i_r = np.int32(r * self.i_per_r)
@@ -573,6 +596,7 @@ class photosphere:
             plt.show()
             self.nan_check()
             print(k)
+            print(f'{E_in_after - E_in:.2e}')
             assert E_in_after < E_in
 
         if self.verbose:
@@ -650,7 +674,6 @@ class photosphere:
             self.nan_check()
             self.cool_step(dt)
             total_mass_loss += self.remove_droplets()
-            #self.nan_check()
 
             if i % plot_interval == 0 and plot:
                 self.plot('rho', plot_photosphere=True, val_min=1e-4)
@@ -674,9 +697,72 @@ class photosphere:
 
         return t, L, A, R, T, total_mass_loss, t_half, t_tenth
 
+    def long_term_evolution_v2(self, max_time=100, max_count=1000, plot=False, plot_interval=1, save_name='impact', plot_max=20):
+
+        self.verbose = False
+
+        self.cool_step(1e5)
+        self.remove_droplets()
+
+        t = [0]
+        L = [self.luminosity]
+        A = [self.A_photosphere]
+        R = [self.R_photosphere]
+        T = [self.T_photosphere]
+        m_dot = [0]
+
+        i = 0
+        t_current = 0
+        t_plot = 0
+        plot_count = 0
+
+        while t[i] < max_time * yr and i < max_count:
+
+            i += 1
+
+            E_in = np.sum(self.data['E'][(self.data['tau'] > photosphere_depth) & (self.data['P'] < pressure_shell)])
+            t_cool_estimated = E_in / self.luminosity
+
+            dt = (t_cool_estimated / 50) if t_current > 1 * yr else 0.05 * yr
+            t_current += dt
+            t_plot += dt
+
+            self.nan_check()
+            self.cool_step(dt)
+            mass_loss = self.remove_droplets()
+
+            t.append(t_current)
+            L.append(self.luminosity)
+            A.append(self.A_photosphere)
+            R.append(self.R_photosphere)
+            T.append(self.T_photosphere)
+            m_dot.append(mass_loss / dt)
+
+            if t_plot > plot_interval * yr and plot and plot_count < plot_max:
+                self.plot('rho', plot_photosphere=True, val_max=1e4, val_min=1e-4, ylim=[-20, 20], xlim=[0, 40],
+                          save=f'cooling/{save_name}_rho_t{t_current / yr:2.2f}', cmap='magma')
+                self.plot('T', log=False, round_to=500, val_min=1000, val_max=4000, plot_photosphere=True, ylim=[-25, 25], xlim=[0, 50],
+                          save=f'cooling/{save_name}_T_t{t_current / yr:2.2f}', cmap='inferno')
+                t_plot = 0
+                plot_count += 1
+
+        self.verbose = True
+
+        t = np.array(t)
+        L, A, R, T = np.array(L), np.array(A), np.array(R), np.array(T)
+
+        i_half = np.argmin((L / L[0]) > 0.5)
+        i_quarter = np.argmin((L / L[0]) > 0.25)
+        i_tenth = np.argmin((L / L[0]) > 0.1)
+        t_half = t[i_half]
+        t_quarter = t[i_quarter]
+        t_tenth = t[i_tenth]
+
+        return t, L, A, R, T, m_dot, t_half, t_quarter, t_tenth
+
     def set_up(self):
 
-        self.initial_cool_v2(1e5)
+        self.initial_cool_v2(1.5e5)
         self.nan_check()
         self.remove_droplets()
 
@@ -707,47 +793,7 @@ class photosphere:
                 # for k2 in self.data.keys():
                 #     print(f'{k2}: {self.data[k2][nan_mask]}')
 
-    def nan_fix(self):
-
-        nan_mask = np.isnan(self.data['rho']) | np.isnan(self.data['T'])
-
-        nan_rho = 1e-5
-        nan_T = 2200
-        nan_P = fst.P_EOS(nan_rho, nan_T)
-        nan_S = fst.S_EOS(nan_rho, nan_T)
-        nan_u = fst.u_EOS(nan_rho, nan_T)
-
-        self.data['rho'] = np.where(nan_mask, nan_rho, self.data['rho'])
-        self.data['T'] = np.where(nan_mask, nan_T, self.data['T'])
-        self.data['P'] = np.where(nan_mask, nan_P, self.data['P'])
-        self.data['s'] = np.where(nan_mask, nan_S, self.data['s'])
-        self.data['u'] = np.where(nan_mask, nan_u, self.data['u'])
-
 
 if __name__ == '__main__':
     snap = snapshot('snapshots/basic_twin/snapshot_0411.hdf5')
     phot = photosphere(snap, n_theta=50)
-    phot.set_up()
-
-    t1, L1, A1, R1, T1, m1 = phot.long_term_evolution(plot=False, plot_interval=40)
-
-    phot2 = photosphere(snap, n_theta=50)
-    phot2.set_up()
-    t2, L2, A2, R2, T2, m2 = phot2.long_term_evolution(plot=False, plot_interval=40)
-
-    plt.plot(t1 / yr, L1 / L_sun)
-    plt.plot(t2 / yr, L2 / L_sun)
-    plt.show()
-
-    plt.plot(t1 / yr, R1 / R_earth)
-    #plt.plot(t2 / yr, R2 / R_earth)
-    plt.show()
-
-    plt.plot(t1 / yr, T1)
-    #plt.plot(t2 / yr, T2)
-    plt.show()
-
-# new sims that work: 0, 1, 3, 4, 6, 8
-# 8, 9 requires cooling
-# 4, 6 has some weird bits
-# 5 also (not really a synestia)

@@ -249,10 +249,29 @@ def create_preset_conditions():
         generate_initial_conditions(P, M[0], K[0], V[0], b)
 
 
-preset = input('Create preset simulations? (Y/n): ')
+def create_preset_conditions_v2():
+    P = 1e5
+    M = [0.375, 0.75, 1.5]
+    for m in M:
+        generate_initial_conditions(P, m, 1, 1.1, 0.5)
 
-if preset == 'Y':
+    B = [0.2, 0.4, 0.6, 0.7]
+    for b in B:
+        generate_initial_conditions(P, 0.5, 1, 1.1, b)
+
+    M = [0.5, 0.1, 0.25, 1, 2]
+    for m in M:
+        generate_initial_conditions(P, m, 0.5, 1.1, 0.5)
+        generate_initial_conditions(P, m, 1, 1.1, 0.1)
+
+
+preset1 = input('Create 1st set of preset simulations? (Y/n): ')
+preset2 = input('Create 2nd set of preset simulations? (Y/n): ')
+
+if preset1 == 'Y':
     create_preset_conditions()
+elif preset2 == 'Y':
+    create_preset_conditions_v2()
 else:
     target_mass = float(input('Enter target mass (in Earth masses): '))
     target_spin = float(input('Enter target spin period (in hours) [if 0 is entered, no spin will be implemented]: '))

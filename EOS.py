@@ -1,10 +1,10 @@
 # calcluates EOS and absorption for forsterite
 # fully in SI units
+
 import uuid
 import matplotlib.pyplot as plt
 import numpy as np
 import woma
-from tqdm import tqdm
 
 np.set_printoptions(precision=4)
 from scipy.interpolate import RegularGridInterpolator, interp1d
@@ -30,6 +30,7 @@ NewEOS.loadstdsesame('aneos-forsterite-2019-1.0.0/NEW-SESAME-STD.TXT')
 NewEOS.MODELNAME = 'Forsterite-ANEOS-SLVTv1.0G1'  # string set above in user input
 NewEOS.MDQ = np.zeros((NewEOS.NT, NewEOS.ND))  # makes the empty MDQ array
 
+# EOS properties
 NewEOS.MATID = 1.0
 NewEOS.DATE = 190802
 NewEOS.VERSION = 0.1
@@ -45,24 +46,27 @@ NewEOS.rho = NewEOS.rho * 1e3
 NewEOS.P, NewEOS.S = NewEOS.P * 1e9, NewEOS.S * 1e6
 NewEOS.U = NewEOS.U * 1e6
 NewEOS.cs = NewEOS.cs * 1e2
-
 NewEOS.vc.Sl, NewEOS.vc.Sv = NewEOS.vc.Sl * 1e6, NewEOS.vc.Sv * 1e6
 NewEOS.vc.Pl, NewEOS.vc.Pv = NewEOS.vc.Pl * 1e9, NewEOS.vc.Pv * 1e9
 NewEOS.vc.rl = NewEOS.vc.rl * 1e3
 P_critical_point, S_critical_point = NewEOS.cp.P * 1e9, NewEOS.cp.S * 1e6
 
-# EQUATION OF STATE CALCULATIONS HERE #
-
+# interpolators for future calculations
 method = 'linear'
 u_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.U.T, method=method, bounds_error=False, fill_value=None)
 P_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.P.T, method=method, bounds_error=False, fill_value=None)
 S_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.S.T, method=method, bounds_error=False, fill_value=None)
 cs_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.cs.T, method=method, bounds_error=False, fill_value=None)
+
+# blank interpolators to be filled in later
 rho_interp, T_interp = lambda x: np.full_like(x, np.NaN), lambda x: np.full_like(x, np.NaN)
 T2_interp = lambda x: np.full_like(x, np.NaN)
+
+# range for the (S, P) -> (rho, T) interpolator
 S_range, log_P_range = [1000, 20000], [-6, 13]
 
 
+# allows a function defined within another function to be used in a multiprocessing pool
 def globalize(func):
     def result(*args, **kwargs):
         return func(*args, **kwargs)
@@ -71,10 +75,12 @@ def globalize(func):
     return result
 
 
+# calculates fractional error between two values
 def frac_error(x1, x2):
     return np.abs(x1 - x2) / x2
 
 
+# finds T for a given rho and other variable from EOS table
 def reverse_EOS_table_rho_X(interpolator, table, rho, X):
 
     # find the closest rho index
@@ -100,6 +106,7 @@ def reverse_EOS_table_rho_X(interpolator, table, rho, X):
     return T_res, check_error
 
 
+# finds rho and T from two other variables
 def reverse_EOS_table_X_Y(interpolatorX, tableX, interpolatorY, tableY, X, Y):
 
     # find the closest rho and T indexes
@@ -125,6 +132,7 @@ def reverse_EOS_table_X_Y(interpolatorX, tableX, interpolatorY, tableY, X, Y):
     return rho_res, T_res, check_error
 
 
+# generates or loads a numpy array for rho and T as functions of S and P to be used in an interpolator
 def generate_table_S_P(load_from_file=False, n=10):
     global rho_interp, T_interp
 
@@ -181,6 +189,7 @@ def generate_table_S_P(load_from_file=False, n=10):
     T_interp = RegularGridInterpolator((S, logP), T_table.T, method=method, bounds_error=False, fill_value=None)
 
 
+# generates or loads a numpy array for  T as functions of rho and u to be used in an interpolator
 def generate_table_u_rho(load_from_file=False, n=10):
     global T2_interp
 
@@ -217,21 +226,12 @@ def generate_table_u_rho(load_from_file=False, n=10):
             i = r[1]
             T_table[:, i] = r[0]
 
-        # for i in tqdm(range(x.shape[0])):
-        #     for j in range(x.shape[1]):
-        #         T_table[j, i], error_table[j, i] = reverse_EOS_table_rho_X(u_EOS, NewEOS.U, 10 ** y[i, j], x[i, j])
-
         np.save(f'EOS_tables/T_uRho_table_n_{n}.npy', T_table)
-
-        # plt.contourf(u, log_rho, np.log10(error_table), 80)
-        # plt.xscale('log')
-        # plt.colorbar()
-        # plt.contour(u, log_rho, np.log10(error_table), [-1, 0], colors='black')
-        # plt.show()
 
     T2_interp = RegularGridInterpolator((u, log_rho), T_table, method=method, bounds_error=False, fill_value=None)
 
 
+# turns two multidimensional numpy arrays into a form that can be used with the scipy interpolator
 def make_into_pair_array(arr1, arr2):
     arr1, arr2 = np.nan_to_num(arr1), np.nan_to_num(arr2)
 
@@ -271,6 +271,7 @@ def make_into_pair_array(arr1, arr2):
         return np.array([arr1, arr2])
 
 
+# EOS functions using the interpolators created in the previous code
 P_EOS = lambda rho, T: P_interp(make_into_pair_array(rho, T))
 S_EOS = lambda rho, T: S_interp(make_into_pair_array(rho, T))
 u_EOS = lambda rho, T: u_interp(make_into_pair_array(rho, T))
@@ -280,42 +281,7 @@ T1_EOS = lambda S, P: T_interp(make_into_pair_array(S, np.log10(P)))
 T2_EOS = lambda u, rho: T2_interp(make_into_pair_array(u, np.log10(rho)))
 
 
-def EOS(rho=None, T=None, P=None, S=None, u=None, check=False):
-
-    if rho is not None:
-
-        if u is not None:
-            T = T2_EOS(u, rho)
-            P, S = P_EOS(rho, T), S_EOS(rho, T)
-
-        elif T is not None:
-            P, S = P_EOS(rho, T), S_EOS(rho, T)
-            u = u_EOS(rho, T)
-
-        if check:
-            rho_check = rho_EOS(S, P)
-            T_check = T1_EOS(S, P)
-            T_error = np.nan_to_num(np.abs(T_check - T) / T)
-            rho_error = np.nan_to_num(np.abs(rho_check - rho) / rho)
-            assert np.all(rho_error < 0.1)
-            assert np.all(T_error < 0.1)
-
-    elif P is not None and S is not None:
-        rho = rho_EOS(S, P)
-        T = T1_EOS(S, P)
-        u = u_EOS(rho, T)
-
-        if check:
-            u_check = u_EOS(rho, T)
-            u_error = np.nan_to_num(np.abs(u_check - u) / u)
-            assert np.all(u_error < 0.1)
-
-    else:
-        return None
-
-    return rho, T, P, S, u
-
-
+# generates the table if this file in run on its own, otherwise loads the pre-generated table
 if __name__ == '__main__':
     woma.load_eos_tables(['ANEOS_forsterite'])
     generate_table_u_rho(load_from_file=False, n=800)
@@ -324,8 +290,10 @@ else:
     generate_table_u_rho(load_from_file=True, n=800)
     generate_table_S_P(load_from_file=True, n=400)
 
+
 # PHASE CALCULATIONS HERE #
 
+# interpolators for the vapor curves
 S_vc = np.concatenate([[0], np.flip(NewEOS.vc.Sl), NewEOS.vc.Sv])
 P_vc = np.concatenate([[1e-7], np.flip(NewEOS.vc.Pl), NewEOS.vc.Pv])
 P_vapor_curve = interp1d(S_vc, P_vc, bounds_error=False, fill_value=np.NaN)
@@ -333,11 +301,13 @@ S_vapor_curve_l = interp1d(NewEOS.vc.Pl, NewEOS.vc.Sl, bounds_error=False, fill_
 S_vapor_curve_v = interp1d(NewEOS.vc.Pv, NewEOS.vc.Sv, bounds_error=False, fill_value=np.NaN)
 rho_vapor_curve_l = interp1d(NewEOS.vc.Pl, NewEOS.vc.rl, bounds_error=False, fill_value=np.NaN)
 
-
+# for a given value of S and P, returns the S value of the condensation point
+# (or returns the input S if above the critical point)
 def condensation_S(S, P):
     return np.where(P < P_critical_point, S_vapor_curve_v(P), S)
 
 
+# returns the phase of the forsterite as an integer flag defined as:
 # 0 : invalid region, 1 : liquid/solid, 2 : liquid vapor mix, 3 : vapor, 4 : supercritical
 def phase(S, P):
     min_P = 1e-5  # pressures below this are invalid
@@ -352,6 +322,8 @@ def phase(S, P):
     return result
 
 
+# returns the vapor quality at a give (S, P)
+# returns 0 if no vapor present and 1 if all vapor
 def vapor_quality(S, P):
 
     Sl = S_vapor_curve_l(P)
@@ -365,10 +337,12 @@ def vapor_quality(S, P):
     return result
 
 
+# returns the density of the liquid at given pressure
 def rho_liquid(P):
     return rho_vapor_curve_l(P)
 
 
+# returns the liquid volume fraction of a vapor at a given (rho, P, S)
 def liquid_volume_fraction(rho, P, S):
     q = vapor_quality(S, P)
     rho_l = rho_vapor_curve_l(P)
@@ -376,8 +350,8 @@ def liquid_volume_fraction(rho, P, S):
     return lvf
 
 
+# returns the density of the vapor at given (rho, P, S)
 def rho_vapor(rho, S, P):
-
     q = vapor_quality(S, P)
     rho_l = rho_vapor_curve_l(P)
 
@@ -385,6 +359,7 @@ def rho_vapor(rho, S, P):
 
 
 # ABSORPTION CALCULATIONS HERE #
+# absorption (alpha) is defined here as the optical attenuation coeffcient
 
 # calculates the absorption of the liquid droplets
 def alpha_l(rho, P, S, D0):
@@ -397,7 +372,7 @@ def alpha_l(rho, P, S, D0):
     return (6 / (4 * D0)) * lvf
 
 
-# calculates the absorption of the vapor mix
+# calculates the absorption of the vapor
 def alpha_v(rho, T):
     B0 = 6e17  # m^-1
     B1, B2 = 37, -11.6
@@ -409,10 +384,11 @@ def alpha_v(rho, T):
     return np.nan_to_num(result)
 
 
+# blank interpolator to be filled in (calculates the T for a given alpha and rho)
 T3_interp = lambda x: None
 
 
-# calculates the total absorption
+# calculates the total absorption or liquid and vapor at a given (rho, T, P, S) and droplet size
 def alpha(rho, T, P, S, D0=1e-3):
 
     ph = phase(S, P)
@@ -429,6 +405,7 @@ def alpha(rho, T, P, S, D0=1e-3):
     return result
 
 
+# generates a table to calculate T for a given rho and alpha_v
 def generate_table_alpha_v():
     global T3_interp
 
@@ -453,73 +430,7 @@ def generate_table_alpha_v():
 generate_table_alpha_v()
 
 
+# wrapper function for the T(alpha_v, rho) interpolator
 def T_alpha_v(rho, alpha_v):
     rho_alpha = make_into_pair_array(np.log10(alpha_v), np.log10(rho))
     return T3_interp(rho_alpha)
-
-
-# COOLING CALCULATIONS HERE #
-
-def cool(P, S, du, remove_droplets=True):
-
-    rho_1, T_1, P_1, S_1, u_1 = EOS(P=P, S=S, check=False)
-
-    # cool with constant density
-    u_2 = u_1 - du
-    rho_2 = rho_1
-    rho_2, T_2, P_2, S_2, u_2 = EOS(u=u_2, rho=rho_2, check=False)
-
-    # remove droplets
-    P_3 = P_2
-    S_3 = S_vapor_curve_v(P_2)
-    rho_3, T_3, P_3, S_3, u_3 = EOS(S=S_3, P=P_3, check=False)
-
-    if remove_droplets:
-        rho_3 = np.where(phase == 2, rho_3, rho_2)
-        T_3 = np.where(phase == 2, T_3, T_2)
-        P_3 = np.where(phase == 2, P_3, P_2)
-        S_3 = np.where(phase == 2, S_3, S_2)
-        u_3 = np.where(phase == 2, u_3, u_2)
-        return rho_3, T_3, P_3, S_3, u_3
-    else:
-        return rho_2, T_2, P_2, S_2, u_2
-
-
-def cooling_plot(P_1, S_1, du):
-    rho_1, T_1, P_1, S_1, u_1 = EOS(P=P_1, S=S_1, check=True)
-
-    # cool with constant density
-    u_2 = u_1 - du
-    rho_2 = rho_1
-    rho_2, T_2, P_2, S_2, u_2 = EOS(u=u_2, rho=rho_2, check=False)
-
-    # remove droplets
-    P_3 = P_2
-    S_3 = S_vapor_curve_v(P_2)
-    rho_3, T_3, P_3, S_3, u_3 = EOS(S=S_3, P=P_3, check=False)
-
-    print(f'u_1={u_1}, u_2={u_2}, u_3={u_3}')
-    print(f'rho_1={rho_1}, rho_2={rho_2}, rho_3={rho_3}')
-    print(f'E_rho_1={u_1*rho_1}, E_rho_2={u_2*rho_2}, E_rho_3={u_3*rho_3}')
-
-    print(frac_error(T_1, T2_EOS(u_1, rho_1)))
-    print(frac_error(P_EOS(rho_1, T2_EOS(u_1, rho_1)), P_1))
-    print(frac_error(S_EOS(rho_1, T2_EOS(u_1, rho_1)), S_1))
-
-    # plot cooling track
-    u_cool = np.linspace(u_1, u_2)
-    rho_cool = np.full_like(u_cool, rho_1)
-    rho_cool, T_cool, P_cool, S_cool, u_cool = EOS(u=u_cool, rho=rho_cool, check=False)
-
-    S_cond = np.linspace(S_2, S_3)
-    P_cond = np.full_like(S_cond, P_2)
-
-    plt.plot(S_cool, P_cool, 'b--', label='Cool at constant volume')
-    plt.plot(S_cond, P_cond, 'b--', label='Loss of droplets')
-    plt.plot(NewEOS.vc.Sl, NewEOS.vc.Pl, 'k--')
-    plt.plot(NewEOS.vc.Sv, NewEOS.vc.Pv, 'k--')
-    plt.scatter(S_1, P_1, marker='x')
-    plt.legend()
-    plt.yscale('log')
-    plt.show()
-

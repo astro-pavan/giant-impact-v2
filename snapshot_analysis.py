@@ -1,4 +1,6 @@
 # reads snapshots of SWIFT simulations for plotting and analysis
+# handles the data on the particle level
+
 import swiftsimio as sw
 from matplotlib.colors import LogNorm, SymLogNorm
 from swiftsimio.visualisation.slice import slice_gas
@@ -13,7 +15,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 
-
+# data lables used in plots
 data_labels = {
     "z": "z ($R_{\oplus}$)",
     "R": "R ($R_{\oplus}$)",
@@ -51,6 +53,7 @@ data_labels = {
     "test": ""
 }
 
+# colormaps associated with each variable
 colormaps = {
     "rho": "magma",
     "T": "coolwarm",
@@ -68,6 +71,7 @@ colormaps = {
 # class that stores and analyses particle data in a SWIFT snapshot
 class snapshot:
 
+    # note: plot rotation will plot a scatter plot of the particle angular velocity
     def __init__(self, filename, plot_rotation=False):
 
         # loads particle data
@@ -150,7 +154,7 @@ class snapshot:
         print(f'Center of mass found at {center_of_mass}')
         return center_of_mass
 
-    # uses unyt
+    # calculates the mass within a given radius (r needs to be in unyt form)
     def mass_within_r(self, r):
 
         if type(r) is np.ndarray:
@@ -357,7 +361,7 @@ class snapshot:
         return best_fit_mks, CoRoL
 
 
-# class that stores a 2D slice of the SWIFT snapshot used for plotting and analysis
+# class that stores a 2D slice of the SWIFT snapshot used for plotting
 class gas_slice:
 
     def __init__(self, snapshot, resolution=1024, size=1, center=(0, 0, 0), rotate_vector=(0, 0, 1)):
@@ -431,6 +435,7 @@ class gas_slice:
 
         self.data['rho'].convert_to_units(g / cm ** 3)
 
+    # generates the ticks used in the plots
     def ticks(self):
 
         factor = 10 ** (np.floor(np.log10(self.size)) - 1)
@@ -533,53 +538,3 @@ class gas_slice:
             plt.show()
 
         plt.close()
-
-
-def test():
-
-    snapshot1 = snapshot('snapshots/basic_twin/snapshot_0411.hdf5')
-    print(snapshot1.total_mass)
-    print(snapshot1.mass_within_r(2 * Rearth))
-    m = 1*unyt.M_earth
-    m.convert_to_mks()
-    slice1 = gas_slice(snapshot1, size=5)
-    slice1.plot('v_r', log=False)
-
-
-def AM_plot():
-
-    snapshot1 = snapshot('snapshots/basic_twin/snapshot_0411.hdf5')
-    print(snapshot1.total_angular_momentum)
-
-    snapshots = ['snapshots/low_mass_twin/snapshot_0274.hdf5',
-                 'snapshots/basic_twin/snapshot_0411.hdf5',
-                 'snapshots/high_mass_twin/snapshot_0360.hdf5',
-                 'snapshots/basic_spin/snapshot_0247.hdf5',
-                 'snapshots/advanced_spin/snapshot_0316.hdf5']
-    L = np.array([4.7e-4, 2e-3, 3e-3, 4.3e-4, 4.5e-4])
-    Q = [6759163.58216159, 9667334.53721656, 17032024.95369644, 9882334.67993462, 9044909.88212921]
-    AM = np.array([0.0, 0.0, 0.0, 0.0, 0.0])
-    SAM = np.array([0.0, 0.0, 0.0, 0.0, 0.0])
-
-    for i in range(len(snapshots)):
-        snapshot1 = snapshot(snapshots[i])
-        snapshot1.total_mass.convert_to_mks()
-        AM[i] = snapshot1.total_angular_momentum
-        SAM[i] = snapshot1.total_specific_angular_momentum
-
-    colours = ['red', 'orange', 'gold', 'green', 'blue']
-
-    plt.scatter(SAM, Q, c=colours, marker='x')
-    plt.xlabel('Specific angular momentum ($m^{2}s^{-1}$)')
-    plt.ylabel('Modified specific impact energy ($J/kg$)')
-    plt.show()
-
-    plt.scatter(SAM, L, c=colours, marker='x')
-    plt.xlabel('Specific angular momentum ($m^{2}s^{-1}$)')
-    plt.ylabel('Luminosity ($L_{\odot}$)')
-    plt.show()
-
-    plt.scatter(Q, L, c=colours, marker='x')
-    plt.xlabel('Modified specific impact energy ($J/kg$)')
-    plt.ylabel('Luminosity ($L_{\odot}$)')
-    plt.show()

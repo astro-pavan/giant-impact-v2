@@ -47,31 +47,10 @@ def get_v(R, z, a):
     return np.nan_to_num(v)
 
 
-def replace_nan_with_nearest(arr):
-    # Find indices of NaN values
-    nan_indices = np.isnan(arr)
-
-    # Create an array of coordinates for non-NaN values
-    non_nan_indices = np.arange(len(arr))[~nan_indices]
-
-    if len(non_nan_indices) == 0:
-        # If there are no non-NaN values, we can't replace NaNs
-        return arr
-
-    # Interpolate using SciPy's interp1d to fill NaNs with the nearest non-NaN value
-    interp_func = interp1d(non_nan_indices, arr[~nan_indices], kind='nearest', fill_value='extrapolate')
-    interpolated_values = interp_func(np.arange(len(arr)))
-
-    # Replace NaN values with the interpolated values
-    arr[nan_indices] = interpolated_values[nan_indices]
-
-    return arr
-
-
 class photosphere:
 
     # sample size and max size both have units
-    def __init__(self, snapshot, sample_size=12*Rearth, max_size=50*Rearth, resolution=500, n_theta=100, n_phi=10):
+    def __init__(self, snapshot, sample_size=12*Rearth, max_size=50*Rearth, resolution=500, n_theta=100, n_phi=10, droplet_infall=True):
 
         self.j_phot = np.zeros(n_theta + 1)
         self.luminosity = 0
@@ -82,6 +61,7 @@ class photosphere:
         max_size.convert_to_units(Rearth)
         self.snapshot = snapshot
         self.data = {}
+        self.droplet_infall = droplet_infall
 
         # calculates the indexes to sample from to fill the array
         r_range = np.linspace(0, sample_size.value * 0.95, num=int(resolution / 2)) * Rearth
@@ -422,7 +402,7 @@ class photosphere:
         self.data['vq'] = fst.vapor_quality(self.data['s'], self.data['P'])
         self.data['lvf'] = fst.liquid_volume_fraction(self.data['rho'], self.data['P'], self.data['s'])
 
-    def remove_droplets(self, max_infall=1e4, check_infall=True, check_alpha=False):
+    def remove_droplets(self, max_infall=1e4, check_infall=True, check_alpha=False, dt=1):
 
         condensation_mask = self.data['phase'] == 2
 
@@ -431,9 +411,10 @@ class photosphere:
         D0, CD = 1e-3, 0.5
         keplerian_omega = np.sqrt((6.674e-11 * self.central_mass) / (self.data['R'] ** 3))
         omega = self.snapshot.best_fit_rotation_curve_mks(self.data['R'])
-        v = np.abs(self.data['R'] * (keplerian_omega - omega))
+        v_rel = np.abs(self.data['R'] * (keplerian_omega - omega))
+        v_orb = np.abs(self.data['R'] * keplerian_omega)
 
-        t_infall = (2 * rho_drop * D0) / (rho_vapour * CD * v)
+        t_infall = (2 * rho_drop * D0 * v_orb) / (rho_vapour * CD * (v_rel ** 2))
         t_infall = np.where(condensation_mask, t_infall, 0)
         self.data['t_infall'] = t_infall
 
@@ -442,7 +423,8 @@ class photosphere:
         else:
             remove_mask = condensation_mask
 
-        initial_mass = np.nansum(self.data['m'][remove_mask])
+        initial_mass = np.array(self.data['m'])
+        total_initial_mass = np.nansum(initial_mass[remove_mask])
         new_S = fst.condensation_S(self.data['s'], self.data['P'])
         self.data['s'] = np.where(remove_mask, new_S, self.data['s'])
         self.data['rho'] = fst.rho_EOS(self.data['s'], self.data['P'])
@@ -450,27 +432,28 @@ class photosphere:
         self.data['u'] = fst.u_EOS(self.data['rho'], self.data['T'])
         self.calculate_EOS()
 
-        final_mass = np.nansum(self.data['m'][remove_mask])
-        mass_lost = initial_mass - final_mass
+        final_mass = self.data['m']
+        total_final_mass = np.nansum(final_mass[remove_mask])
+        mass_lost = total_initial_mass - total_final_mass
         if self.verbose:
             print(f'Removing droplets: {mass_lost / M_earth:.2e} M_earth lost')
 
         if check_alpha:
-            t = self.data['t_infall']
-            V_photosphere = np.nansum(self.data['V'][self.data['tau'] > photosphere_depth])
-            rho_drop = np.nanmean(fst.rho_liquid(self.data['P']))
+            phot_mask = self.data['tau'] > photosphere_depth
 
-            m_drop = t * (self.luminosity / silicate_latent_heat_v)
-            lvf = m_drop / (rho_drop * V_photosphere)
-            D0 = 1e-3
+            droplet_volume = ((initial_mass - final_mass) * (t_infall / dt)) / rho_drop
+            lvf = droplet_volume / self.data['V']
             alpha_drop = (6 / (4 * D0)) * lvf
-            f = alpha_drop / self.data['alpha_v']
-            self.data['test'] = np.where(self.data['tau'] > photosphere_depth, f, 0)
-            self.plot('test', contours=[0])
+
+            alpha_drop = np.where(condensation_mask, alpha_drop, 0)
+
+            alpha_drop_mean = np.sum(alpha_drop * self.data['V']) / np.sum(self.data['V'][condensation_mask])
+            if alpha_drop_mean > 1e-8:
+                print(alpha_drop_mean)
 
         return mass_lost
 
-    def get_photosphere(self, check_droplets=False):
+    def get_photosphere(self):
 
         d_tau = self.data['alpha_v'] * self.data['dr']
         self.data['tau'] = np.flip(np.cumsum(np.flip(d_tau, axis=1), axis=1), axis=1)
@@ -635,19 +618,6 @@ class photosphere:
         self.data['s'] = fst.S_EOS(rho, T2)
         self.calculate_EOS()
 
-        # u1, rho, T1 = self.data['u'], self.data['rho'], np.array(self.data['T'])
-        # tau = self.data['alpha_v'] * R_earth
-        #
-        # emissivity = 1 - np.exp(-tau) + tau * exp1(tau)
-        # F = sigma * T1 ** 4 * emissivity
-        # t_cool = ((u1 * rho) / F) * R_earth
-        #
-        # min_cooling_time = np.nanmin(t_cool)
-        # print(f'MIN: {min_cooling_time:.2e}')
-        #
-        # self.data['t_cool'] = t_cool
-        # self.plot('t_cool')
-
         return True
 
     def long_term_evolution(self, total_time=40, div=20, plot=False, plot_interval=10):
@@ -699,10 +669,13 @@ class photosphere:
 
     def long_term_evolution_v2(self, max_time=100, max_count=1000, plot=False, plot_interval=1, save_name='impact', plot_max=20):
 
+        print('Cooling...')
+
         self.verbose = False
 
         self.cool_step(1e5)
-        self.remove_droplets()
+        if self.droplet_infall:
+            self.remove_droplets()
 
         t = [0]
         L = [self.luminosity]
@@ -723,13 +696,19 @@ class photosphere:
             E_in = np.sum(self.data['E'][(self.data['tau'] > photosphere_depth) & (self.data['P'] < pressure_shell)])
             t_cool_estimated = E_in / self.luminosity
 
-            dt = (t_cool_estimated / 50) if t_current > 1 * yr else 0.05 * yr
+            dt = (t_cool_estimated / 50) if t_current > 1 * yr else 0.08 * yr
             t_current += dt
             t_plot += dt
 
             self.nan_check()
-            self.cool_step(dt)
-            mass_loss = self.remove_droplets()
+
+            try:
+                self.cool_step(dt)
+            except AssertionError:
+                if t_current > 10 * yr:
+                    break
+
+            mass_loss = self.remove_droplets(check_alpha=True, dt=dt) if self.droplet_infall else 0
 
             t.append(t_current)
             L.append(self.luminosity)
@@ -748,6 +727,8 @@ class photosphere:
 
         self.verbose = True
 
+        print('Cooling complete')
+
         t = np.array(t)
         L, A, R, T = np.array(L), np.array(A), np.array(R), np.array(T)
 
@@ -764,7 +745,8 @@ class photosphere:
 
         self.initial_cool_v2(1.5e5)
         self.nan_check()
-        self.remove_droplets()
+        if self.droplet_infall:
+            self.remove_droplets()
 
         self.get_photosphere()
 

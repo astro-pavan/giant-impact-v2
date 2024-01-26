@@ -1,5 +1,5 @@
 # analyses the observability of a post impact body with gaia data
-
+import pandas
 # SELECT gaia_source.source_id,gaia_source.ra,gaia_source.dec,gaia_source.parallax,gaia_source.phot_g_mean_flux_over_error,gaia_source.phot_g_mean_mag,gaia_source.bp_rp,gaia_source.phot_variable_flag,gaia_source.non_single_star,gaia_source.has_xp_continuous,gaia_source.has_xp_sampled,gaia_source.has_rvs,gaia_source.has_mcmc_gspphot,gaia_source.has_mcmc_msc,gaia_source.teff_gspphot,gaia_source.logg_gspphot,gaia_source.distance_gspphot,gaia_source.azero_gspphot,gaia_source.ag_gspphot,gaia_source.ebpminrp_gspphot
 # FROM gaiadr3.gaia_source
 # WHERE
@@ -18,12 +18,18 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm, SymLogNorm
 from astroquery.gaia import Gaia
 from astropy.table import Table
-from gaiaxpy import generate, PhotometricSystem
 from scipy.optimize import curve_fit
+from scipy.interpolate import interp1d
+from scipy.integrate import quad
 
-sun_g_band_app_mag = -26.895 # from Casagrande (2018)
-sun_dist_pc = 1.495e+11 / 3.086e+16 # 1 AU in parsecs
+pc = 3.0857e16  # m
+AU = 1.495e+11  # m
+
+sun_g_band_app_mag = -26.895  # from Casagrande (2018)
+sun_dist_pc = AU / pc  # 1 AU in parsecs
 sun_g_band_abs_mag = sun_g_band_app_mag - 5*np.log10(sun_dist_pc) + 5
+T_sun = 5772  # K
+R_sun = 695700e3  # m
 
 
 # calculates the fractional change in luminosity from a change in magnitude
@@ -41,7 +47,8 @@ def luminosity(g_band_mag, parallax):
 
 
 def abs_mag(g_band_mag, parallax):
-    return g_band_mag + 5*np.log10(parallax) + 5
+    res = g_band_mag + 5*np.log10(parallax) + 5
+    return res
 
 
 # estimates the error in G-band magnitude for a given apparent G-band magnitude
@@ -271,21 +278,84 @@ def gaia_epoch_photometry():
     plt.show()
 
 
-def simulated_impact_photometry():
-
-    pc = 3.0857e16
-
-    def B(wavelength, T):
-        h = 6.62607015e-34
-        c = 299792458
-        kB = 1.380649e-23
-
-        return ((2 * h * c ** 2)/(wavelength ** 5)) * (1 / np.expm1((h*c)/(wavelength*kB*T)))
-
-    def spectrum(wavelength, T, A, distance):
-        return (np.pi * (A / (4*np.pi*distance)) * B(wavelength, T)) / 1.346109E-21
-
-    print(spectrum(500e-9, 3000, 4 * np.pi * ((20 * 6371000) ** 2), 10 * pc))
+def gaia_callibration():
+    query = "SELECT gaia_source.source_id, gaia_source.ra, gaia_source.dec, gaia_source.parallax, gaia_source.parallax_over_error, gaia_source.phot_g_mean_flux_over_error, gaia_source.phot_g_mean_mag, gaia_source.bp_rp, gaia_source.phot_variable_flag, gaia_source.non_single_star, gaia_source.has_xp_continuous, gaia_source.has_xp_sampled, gaia_source.has_rvs, gaia_source.has_epoch_photometry, gaia_source.has_epoch_rv, gaia_source.has_mcmc_gspphot, gaia_source.has_mcmc_msc, gaia_source.teff_gspphot, gaia_source.logg_gspphot, gaia_source.mh_gspphot, gaia_source.distance_gspphot, gaia_source.azero_gspphot, gaia_source.ag_gspphot, gaia_source.ebpminrp_gspphot" +\
+            "FROM gaiadr3.gaia_source\n" + \
+            "WHERE (gaiadr3.gaia_source.parallax_over_error >= 10000)"
+    nearest_stars = pandas.read_csv('nearest_stars.csv')
+    nearest_stars['parallax'] = nearest_stars['parallax'] * 1e-3
+    nearest_stars['distance'] = 1 / nearest_stars['parallax']
+    #nearest_stars.sort_values('parallax')
+    print(nearest_stars[['parallax', 'phot_g_mean_mag']])
 
 
-simulated_impact_photometry()
+passband = pandas.read_csv('GaiaEDR3_passbands_zeropoints_version2/passband2.csv', header=None,
+                                names=['wavelength', 'G', 'col2', 'BP', 'col4', 'RP', 'col6'])
+
+passband['wavelength'] = passband['wavelength'] * 1e-9
+passband['G'] = np.where(passband['G'] > 1, 0, passband['G'])
+G_filter = interp1d(passband['wavelength'], passband['G'], fill_value=0, bounds_error=False)
+
+
+def B(wavelength, T):
+    h, c, kB = 6.62607015e-34, 299792458, 1.380649e-23
+    res = ((2 * h * c ** 2) / (wavelength ** 5)) * (1 / np.expm1((h * c) / (wavelength * kB * T)))
+    return np.where(wavelength <= 0, 0, res)
+
+
+def G_spectrum(wavelength, T, A, distance):
+    return (np.pi * B(wavelength, T) * A * G_filter(wavelength)) / (4 * np.pi * (distance ** 2))
+
+
+m_prox = 8.9847
+T_prox, R_prox = 2990, 0.1542 * R_sun
+flux_prox = quad(lambda x: G_spectrum(x, T_prox, 4*np.pi*(R_prox**2), 1.30197 * pc), 250e-9, 1200e-9)[0]
+
+m_gliese_411 = 6.5512
+T_gliese_411, R_gliese_411 = 3547, 0.392 * R_sun
+flux_gliese_411 = quad(lambda x: G_spectrum(x, T_gliese_411, 4*np.pi*(R_gliese_411**2), 2.5461 * pc), 250e-9, 1200e-9)[0]
+
+m_ross_154 = 9.1264
+T_ross_154, R_ross_154 = 3248, 0.200 * R_sun
+flux_ross_154 = quad(lambda x: G_spectrum(x, T_ross_154, 4*np.pi*(R_ross_154**2), 2.9760 * pc), 250e-9, 1200e-9)[0]
+
+
+def apparent_g_mag(flux):
+    res_1 = -2.5 * np.log10(flux / flux_prox) + m_prox
+    res_2 = -2.5 * np.log10(flux / flux_gliese_411) + m_gliese_411
+    res_3 = -2.5 * np.log10(flux / flux_ross_154) + m_ross_154
+    print(f'{res_1:.3f}, {res_2:.3f}, {res_3:.3f}')
+
+    return np.mean([res_1, res_2, res_3])
+
+
+# solar_spectrum = lambda wavelength: G_spectrum(wavelength, T_sun, 4 * np.pi * (R_sun ** 2), AU)
+# flux_g_band_sun = quad(solar_spectrum, 250e-9, 1500e-9)[0]
+#
+wolf_359_spectrum = lambda wavelength: G_spectrum(wavelength, 2749, 4 * np.pi * ((0.144 * R_sun) ** 2), 2.408 * pc)
+flux_g_band_wolf_359 = quad(wolf_359_spectrum, 250e-9, 1200e-9)[0]
+wolf_359_g_mag = 11.04
+
+impact_spectrum = lambda wavelength: G_spectrum(wavelength, 2800, 4 * np.pi * ((20 * 6371000) ** 2), 10 * pc)
+flux_impact = quad(impact_spectrum, 250e-9, 1200e-9)[0]
+print(apparent_g_mag(flux_impact))
+
+#
+# kepler_445_spectrum = lambda wavelength: G_spectrum(wavelength, 3219, 4 * np.pi * ((0.347 * R_sun) ** 2), 122.9 * pc)
+# flux_kepler_445 = quad(kepler_445_spectrum, 250e-9, 1500e-9)[0]
+# kepler_445_g_mag = 16.68
+
+
+# def apparent_g_mag(flux):
+#     return -2.5 * np.log10(flux/flux_g_band_wolf_359) + wolf_359_g_mag
+
+
+def flux(T, A, dist):
+    f = lambda wavelength: G_spectrum(wavelength, T, A, dist)
+    return quad(f, 200e-9, 2e-6)[0]
+
+
+
+# test_flux = flux(3219, 4 * np.pi * ((0.347 * R_sun) ** 2), 122.9 * pc)
+# mag = apparent_g_mag(test_flux)
+# print(mag)

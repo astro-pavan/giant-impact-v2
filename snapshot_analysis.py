@@ -68,7 +68,7 @@ colormaps = {
 # class that stores and analyses particle data in a SWIFT snapshot
 class snapshot:
 
-    def __init__(self, filename):
+    def __init__(self, filename, plot_rotation=False):
 
         # loads particle data
         self.data = sw.load(filename)
@@ -98,7 +98,7 @@ class snapshot:
         self.HD_limit_R, self.HD_limit_z = self.particle_density_analysis()
         self.HD_limit_R.convert_to_mks()
         self.HD_limit_z.convert_to_mks()
-        self.best_fit_rotation_curve, self.best_fit_rotation_curve_mks, self.CoRoL = self.rotational_analysis()
+        self.best_fit_rotation_curve_mks, self.CoRoL = self.rotational_analysis(plot_rotation)
 
     # calculates the EOS for all particles
     def calculate_EOS(self):
@@ -288,7 +288,7 @@ class snapshot:
         return R_HD_limit * Rearth, z_HD_limit * Rearth
 
     # analyses the rotation of the particles to produce a best fit rotation curve
-    def rotational_analysis(self, plot_output=False, save=False):
+    def rotational_analysis(self, plot_output=False):
 
         self.R_xy.convert_to_mks()
 
@@ -315,46 +315,46 @@ class snapshot:
             print('ERROR: UNABLE TO MODEL OMEGA')
             a0, b0, c0 = 0, 0, 0
 
-        # rotation curve function (uses unyt)
-        def best_fit(R):
-            R.convert_to_units(m)
-            return (10 ** (two_lines(np.log10(R.value), a0, b0, c0))) * (s ** -1)
-
         def best_fit_mks(R):
             return 10 ** (two_lines(np.log10(R), a0, b0, c0))
 
         CoRoL = b0 * m
 
-        omega_keplerian = lambda R: np.sqrt((6.674e-11 * (self.total_mass.value / 5.9722e24)) / ((R * 6371000) ** 3))
+        omega_keplerian = lambda R: np.sqrt((6.674e-11 * self.total_mass.value) / (R ** 3))
 
-        x2 = np.logspace(b0, 2)
-        x1 = np.logspace(-2, b0)
+        x2 = np.logspace(b0, 10)
+        x1 = np.logspace(4, b0)
 
         if plot_output:
 
             rand = np.random.random(len(self.R_xy))
-            plot_mask = (((rand < 0.02) & (self.R_xy < 1)) | ((rand < 0.3) & (self.R_xy > 1))) & \
-                        (np.abs(self.z) < 0.5 * Rearth)
+            #plot_mask = (((rand < 0.02) & (self.R_xy < 1)) | ((rand < 0.3) & (self.R_xy > 1))) & (np.abs(self.z) < 0.5 * Rearth)
+            plot_mask = (np.abs(self.z) < 1 * Rearth) &\
+                        ~np.isnan(self.R_xy) & ~np.isnan(self.data.gas.angular_velocity) & \
+                        (np.log10(np.abs(self.data.gas.angular_velocity)) > -5.5) & \
+                        (np.log10(np.abs(self.R_xy)) > 5.5)
 
-            plt.scatter(self.R_xy[plot_mask], self.data.gas.angular_velocity[plot_mask], s=0.2, c='blue', marker='o')
-            plt.plot(x2, best_fit(x2), linestyle='--', color='red', label='Best fit rotation curve')
-            plt.plot(x2, omega_keplerian(x2), linestyle='--', color='black', label='Keplerian rotation curve')
-            plt.plot(x1, np.full_like(x1, 10 ** a0), 'r--')
-            plt.xlabel('Cyl. Radius ($R_{\oplus}$)')
-            plt.ylabel('Angular velocity (rad/s)')
-            plt.axvspan(10, 100, alpha=0.5, color='grey')
-            plt.xlim([1e-1, 1e2])
-            plt.ylim([1e-8, 1e-2])
+            #plt.scatter(self.R_xy[plot_mask], self.data.gas.angular_velocity[plot_mask], s=0.2, c='blue', marker='o')
+            x = np.log10(np.abs(self.R_xy[plot_mask]))
+            y = np.log10(np.abs(self.data.gas.angular_velocity[plot_mask]))
+            plt.hist2d(x, y, bins=100, cmap='Blues', norm=SymLogNorm(1))
+
+            plt.plot(np.log10(x2), np.log10(best_fit_mks(x2)), linestyle='--', color='red', label='Best fit rotation curve')
+            plt.plot(np.log10(x2), np.log10(omega_keplerian(x2)), linestyle='--', color='black', label='Keplerian rotation curve')
+            plt.plot(np.log10(x1), np.log10(np.full_like(x1, 10 ** a0)), 'r--')
+            plt.xlabel('$\log_{10}$[Cyl. Radius ($R_{\oplus}$)]')
+            plt.ylabel('$\log_{10}$[Angular velocity (rad/s)]')
+            # plt.axvspan(10, 100, alpha=0.5, color='grey')
+            # plt.xlim([1e-1, 1e2])
+            # plt.ylim([1e-8, 1e-2])
             plt.legend()
-            plt.xscale('log')
-            plt.yscale('log')
+            # plt.xscale('log')
+            # plt.yscale('log')
 
-            if save:
-                plt.savefig('plots/plot.png', bbox_inches='tight')
-            else:
-                plt.show()
+            plt.savefig('figures/rotation.png', bbox_inches='tight')
+            plt.savefig('figures/rotation.pdf', bbox_inches='tight')
 
-        return best_fit, best_fit_mks, CoRoL
+        return best_fit_mks, CoRoL
 
 
 # class that stores a 2D slice of the SWIFT snapshot used for plotting and analysis

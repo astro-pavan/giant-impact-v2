@@ -1,0 +1,14 @@
+LICENSE.txt
+README.md
+setup.py
+gdr3bcg/__init__.py
+gdr3bcg/bcg.py
+gdr3bcg.egg-info/PKG-INFO
+gdr3bcg.egg-info/SOURCES.txt
+gdr3bcg.egg-info/dependency_links.txt
+gdr3bcg.egg-info/not-zip-safe
+gdr3bcg.egg-info/requires.txt
+gdr3bcg.egg-info/top_level.txt
+gdr3bcg/data/bc_dr3_feh_all.dat
+test/__init__.py
+test/test_bcg.py

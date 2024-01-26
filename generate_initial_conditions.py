@@ -1,4 +1,4 @@
-# creates the initial conditions
+# creates the initial conditions for the SWIFT simulations
 
 import woma
 import numpy as np
@@ -12,7 +12,8 @@ R_earth = 6.371e6  # m
 M_earth = 5.9724e24  # kg m^-3
 
 
-# creates initial condition hdf5 file
+# creates initial condition hdf5 file to be loaded into SWIFT
+# mass ratio is impactor_mass / target_mass
 def generate_initial_conditions(particle_count, target_mass, mass_ratio, impact_velocity, impact_parameter,
                                 spin_period=0, velocity_unit='v_esc', start_time=1800):
 
@@ -169,6 +170,7 @@ def generate_initial_conditions(particle_count, target_mass, mass_ratio, impact_
     print("Initial conditions saved")
 
 
+# creates the directory where the initial condition files and output files will be stored
 def create_sim_directory(name):
     try:
         os.mkdir(f'{working_directory}{name}')
@@ -188,6 +190,7 @@ def create_sim_directory(name):
     os.system(f'chmod +x {working_directory}{name}/resub.sh')
 
 
+# creates a YML parameter file for SWIFT
 def create_parameter_file(name, sim_time=72000, snapshot_frequency=600):
     with open('initial_condition_files/simulation_parameters.yml', 'r') as file:
         data = file.readlines()
@@ -200,6 +203,7 @@ def create_parameter_file(name, sim_time=72000, snapshot_frequency=600):
         file.writelines(data)
 
 
+# creates a script that can be submitted to SLURM as a job
 def create_slurm_script(name):
     with open('initial_condition_files/slurm_template.sh', 'r') as file:
         data = file.readlines()
@@ -214,6 +218,7 @@ def create_slurm_script(name):
     file.close()
 
 
+# adds restart capabilities, allowing the simulation to resubmit itself every 12 hours
 def create_restart(name):
     with open('initial_condition_files/slurm_restart.sh', 'r') as file:
         data = file.readlines()
@@ -228,6 +233,7 @@ def create_restart(name):
     file.close()
     
 
+# creates the intial set of simulations for analysis in the paper
 def create_preset_conditions():
 
     P = 1e5
@@ -249,6 +255,7 @@ def create_preset_conditions():
         generate_initial_conditions(P, M[0], K[0], V[0], b)
 
 
+# creates the second set of simulations for analysis in the paper
 def create_preset_conditions_v2():
     P = 1e5
     M = [0.375, 0.75, 1.5]
@@ -264,6 +271,8 @@ def create_preset_conditions_v2():
         generate_initial_conditions(P, m, 0.5, 1.1, 0.5)
         generate_initial_conditions(P, m, 1, 1.1, 0.1)
 
+
+# the code below allows the user to either generate the preset conditions or a custom simulation
 
 preset1 = input('Create 1st set of preset simulations? (Y/n): ')
 preset2 = input('Create 2nd set of preset simulations? (Y/n): ')

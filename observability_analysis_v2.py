@@ -316,7 +316,7 @@ def simulated_light_curve(gaia_entry):
     phot = photosphere(snap, 12 * Rearth, 60 * Rearth, 800, n_theta=20)
     phot.set_up()
     L0 = phot.luminosity / L_sun
-    time, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution_v2()
+    time, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution()
 
     lum = lum / L_sun
     time = time / yr
@@ -332,7 +332,7 @@ def simulated_light_curve(gaia_entry):
     phot = photosphere(snap, 12 * Rearth, 60 * Rearth, 800, n_theta=20)
     phot.set_up()
     L0 = phot.luminosity / L_sun
-    time, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution_v2()
+    time, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution()
 
     lum = lum / L_sun
     time = time / yr

@@ -1,6 +1,7 @@
 # extracts data from a snapshot and analyses it, producing a 2D photosphere model
+# all values are in SI units unless otherwise specified
+
 import matplotlib.pyplot as plt
-from matplotlib.colors import Normalize
 import numpy as np
 from scipy.interpolate import interp1d, RegularGridInterpolator
 from scipy.integrate import odeint
@@ -18,7 +19,8 @@ import EOS as fst
 
 cpus = cpu_count()
 
-sigma = 5.670374419e-8
+# constants and function definitions
+sigma = 5.670374419e-8 # stefan-boltzmann constant
 L_sun = 3.828e26
 R_earth = 6371000
 M_earth = 5.972e24
@@ -33,6 +35,7 @@ cos = lambda theta: np.cos(theta)
 sin = lambda theta: np.sin(theta)
 
 
+# allows a function defined within another function to be used in a multiprocessing pool
 def globalize(func):
     def result(*args, **kwargs):
         return func(*args, **kwargs)
@@ -42,15 +45,18 @@ def globalize(func):
     return result
 
 
+# calculates v in elliptical coordinates
 def get_v(R, z, a):
     v = np.sign(z) * np.arccos((np.sqrt((R + a) ** 2 + z ** 2) - np.sqrt((R - a) ** 2 + z ** 2)) / (2 * a))
     return np.nan_to_num(v)
 
 
+# class containing the photosphere model
 class photosphere:
 
     # sample size and max size both have units
-    def __init__(self, snapshot, sample_size=12*Rearth, max_size=50*Rearth, resolution=500, n_theta=100, n_phi=10, droplet_infall=True):
+    def __init__(self, snapshot, sample_size=12*Rearth, max_size=50*Rearth,
+                 resolution=500, n_theta=100, n_phi=10, droplet_infall=True):
 
         self.j_phot = np.zeros(n_theta + 1)
         self.luminosity = 0
@@ -168,16 +174,13 @@ class photosphere:
 
         r, dr = self.data['r'], self.data['dr']
         theta, d_theta = self.data['theta'], self.data['d_theta']
-
-        self.data['A_r-'] = 2 * pi * (r ** 2) * (cos(theta) - cos(theta + d_theta))
         self.data['A_r+'] = 2 * pi * ((r + dr) ** 2) * (cos(theta) - cos(theta + d_theta))
+        self.data['V'] = (1 / 3) * pi * ((r + dr) ** 3 - r ** 3) * (cos(theta) - cos(theta + d_theta))
 
-        self.data['A_theta-'] = pi * ((r + dr) ** 2 - r ** 2) * sin(theta)
-        self.data['A_theta+'] = pi * ((r + dr) ** 2 - r ** 2) * sin(theta + d_theta)
-
-        self.data['A_theta+'][-1, :] = np.zeros_like(self.data['A_theta+'][-1, :])
-
-        self.data['V'] = (1/3) * pi * ((r + dr) ** 3 - r ** 3) * (cos(theta) - cos(theta + d_theta))
+        # self.data['A_r-'] = 2 * pi * (r ** 2) * (cos(theta) - cos(theta + d_theta))
+        # self.data['A_theta-'] = pi * ((r + dr) ** 2 - r ** 2) * sin(theta)
+        # self.data['A_theta+'] = pi * ((r + dr) ** 2 - r ** 2) * sin(theta + d_theta)
+        # self.data['A_theta+'][-1, :] = np.zeros_like(self.data['A_theta+'][-1, :])
 
         # these values are used to calculate the index in the array for a given r and theta
         self.i_per_theta = n_theta / np.pi
@@ -191,14 +194,7 @@ class photosphere:
         self.central_mass = self.snapshot.total_mass.value
         self.data['test'] = self.data['h'] * (self.data['R'] ** -2)
 
-        # R = np.linspace(0, 20) * R_earth
-        # omega = self.snapshot.best_fit_rotation_curve_mks(R)
-        # plt.plot(R / R_earth, omega)
-        # plt.show()
-
-        # self.data['omega'] = self.snapshot.best_fit_rotation_curve_mks(self.data['r'])
-        # self.plot('omega', log=True)
-        self.t_dyn = np.sqrt((max_size.value ** 3) / (6.674e-11 * self.central_mass))
+        # self.t_dyn = np.sqrt((max_size.value ** 3) / (6.674e-11 * self.central_mass))
 
         # extrapolation performed here
         self.entropy_extrapolation = self.extrapolate_entropy()
@@ -208,6 +204,7 @@ class photosphere:
 
         self.verbose = True
 
+    # plots a cross-section of the photosphere as a contour plot for a given parameter
     def plot(self, parameter, log=True, contours=None, cmap='turbo', plot_photosphere=False, round_to=1,
              val_min=None, val_max=None, save=None, xlim=None, ylim=None):
         vals = np.log10(self.data[parameter]) if log else self.data[parameter]
@@ -273,11 +270,13 @@ class photosphere:
 
         plt.close()
 
+    # gets the index in the data array for a given r and theta
     def get_index(self, r, theta):
         i_r = np.int32(r * self.i_per_r)
         i_theta = np.int32(theta * self.i_per_theta)
         return i_theta, i_r
 
+    # extrapolates the entropy at a constant value using elliptical coodinates
     def extrapolate_entropy(self):
 
         print(f'Extrapolating from R = {self.R_min / R_earth:.2f}, z = {self.z_min / R_earth:.2f}')
@@ -306,19 +305,7 @@ class photosphere:
 
         return funct
 
-    def dPdr(self, P, r, theta, S_funct=None):
-        gravity = - (6.674e-11 * self.central_mass) / (r ** 2)
-
-        R = r * np.sin(theta)
-        omega = self.snapshot.best_fit_rotation_curve_mks(r)
-        centrifugal = R * (omega ** 2) * np.sin(theta)
-
-        S = S_funct(r, theta)
-        rho = fst.rho_EOS(S, P)
-
-        result = rho * (gravity + centrifugal)
-        return np.nan_to_num(result)
-
+    # gradient of log(pressure)
     def dlnPdr(self, lnP, r, theta, S_funct=None):
         gravity = - (6.674e-11 * self.central_mass) / (r ** 2)
 
@@ -332,6 +319,7 @@ class photosphere:
         result = np.exp(-lnP) * rho * (gravity + centrifugal)
         return np.nan_to_num(result)
 
+    # extrapolates to the outer regions using the rotating hydrostatic equilibrium model
     def hydrostatic_equilibrium(self, initial_extrapolation=False):
 
         print('Solving hydrostatic equilibrium:')
@@ -387,12 +375,11 @@ class photosphere:
         self.data['T'] = fst.T1_EOS(self.data['s'], self.data['P'])
         self.data['u'] = fst.u_EOS(self.data['rho'], self.data['T'])
 
+    # updates the alpha and other thermodynamic variables (run once rho, T, P, S have been updated)
     def calculate_EOS(self):
-        iron_mask = self.data['matid'] > 400.8
 
         self.data['alpha'] = fst.alpha(self.data['rho'], self.data['T'], self.data['P'], self.data['s'])
         self.data['alpha_v'] = fst.alpha(self.data['rho'], self.data['T'], self.data['P'], self.data['s'], D0=0)
-
 
         self.data['m'] = self.data['rho'] * self.data['V']
         self.data['E'] = self.data['u'] * self.data['m']
@@ -402,6 +389,7 @@ class photosphere:
         self.data['vq'] = fst.vapor_quality(self.data['s'], self.data['P'])
         self.data['lvf'] = fst.liquid_volume_fraction(self.data['rho'], self.data['P'], self.data['s'])
 
+    # removes droplets that have condensed
     def remove_droplets(self, max_infall=1e4, check_infall=True, check_alpha=False, dt=1):
 
         condensation_mask = self.data['phase'] == 2
@@ -453,6 +441,7 @@ class photosphere:
 
         return mass_lost
 
+    # calculates the photosphere and luminonsity of the post impact body
     def get_photosphere(self):
 
         d_tau = self.data['alpha_v'] * self.data['dr']
@@ -484,6 +473,7 @@ class photosphere:
         self.T_photosphere = np.nanmean(self.data['T'][phot_indexes])
         self.R_photosphere = np.nanmean(self.data['r'][phot_indexes])
 
+    # initially cools the post impact body to account for cooling not performed by SWIFT
     def initial_cool(self, max_time):
 
         photosphere_mask = self.data['tau'] < photosphere_depth
@@ -525,6 +515,41 @@ class photosphere:
         self.data['s'] = fst.S_EOS(rho, T2)
         self.calculate_EOS()
 
+    # initially cools the post impact body to account for cooling not performed by SWIFT
+    def initial_cool_v2(self, max_time):
+
+        u1, rho, T1 = self.data['u'], self.data['rho'], np.array(self.data['T'])
+        tau = self.data['alpha_v'] * R_earth
+
+        emissivity = 1 - np.exp(-tau) + tau * exp1(tau)
+        F = sigma * T1 ** 4 * emissivity
+        t_cool = ((u1 * rho) / F) * R_earth
+
+        min_cooling_time = np.nanmin(t_cool)
+        # dt = min_cooling_time * 0.9
+
+        if min_cooling_time > max_time:
+            if self.verbose:
+                print('Max initial cooling time exceeded')
+            return False
+
+        if self.verbose:
+            print(f'Initial cool for {min_cooling_time:.1e} seconds')
+
+        k = np.minimum(max_time / t_cool, 0.5)
+        du = k * u1
+        u2 = u1 - du
+        T2 = fst.T2_EOS(u2, rho)
+
+        self.data['u'] = u2
+        self.data['T'] = T2
+        self.data['P'] = fst.P_EOS(rho, T2)
+        self.data['s'] = fst.S_EOS(rho, T2)
+        self.calculate_EOS()
+
+        return True
+
+    # cools the post impact body for a time dt (assumes constant luminosity)
     def cool_step(self, dt):
 
         photosphere_mask = self.data['tau'] > photosphere_depth
@@ -587,87 +612,9 @@ class photosphere:
             print(f'Energy loss inner region: {dE_in:.2e} ({du_in / u_avg_in:.3%})')
         # print(f'Energy loss outer region: {dE_out:.2e} ({du_out / u_avg_out:.3%})')
 
-    def initial_cool_v2(self, max_time):
-
-        u1, rho, T1 = self.data['u'], self.data['rho'], np.array(self.data['T'])
-        tau = self.data['alpha_v'] * R_earth
-
-        emissivity = 1 - np.exp(-tau) + tau * exp1(tau)
-        F = sigma * T1 ** 4 * emissivity
-        t_cool = ((u1 * rho) / F) * R_earth
-
-        min_cooling_time = np.nanmin(t_cool)
-        # dt = min_cooling_time * 0.9
-
-        if min_cooling_time > max_time:
-            if self.verbose:
-                print('Max initial cooling time exceeded')
-            return False
-
-        if self.verbose:
-            print(f'Initial cool for {min_cooling_time:.1e} seconds')
-
-        k = np.minimum(max_time / t_cool, 0.5)
-        du = k * u1
-        u2 = u1 - du
-        T2 = fst.T2_EOS(u2, rho)
-
-        self.data['u'] = u2
-        self.data['T'] = T2
-        self.data['P'] = fst.P_EOS(rho, T2)
-        self.data['s'] = fst.S_EOS(rho, T2)
-        self.calculate_EOS()
-
-        return True
-
-    def long_term_evolution(self, total_time=40, div=20, plot=False, plot_interval=10):
-
-        self.verbose = False
-
-        total_mass_loss = 0
-        L = [self.luminosity]
-        A = [self.A_photosphere]
-        R = [self.R_photosphere]
-        T = [self.T_photosphere]
-        t = [0]
-
-        E_in = np.sum(self.data['E'][(self.data['tau'] > photosphere_depth) & (self.data['P'] < pressure_shell)])
-        t_cool_estimated = E_in / self.luminosity
-        print(f'Estimated cooling time: {t_cool_estimated:.1e} seconds ({t_cool_estimated / yr:.2f} years)')
-        dt = t_cool_estimated / div
-        t_max = total_time * yr
-        n = int(t_max / dt)
-
-        print(f'Cooling for {n * dt:.1e} seconds ({n * dt / yr:.2f} years):')
-
-        for i in tqdm(range(1, n + 1)):
-            self.nan_check()
-            self.cool_step(dt)
-            total_mass_loss += self.remove_droplets()
-
-            if i % plot_interval == 0 and plot:
-                self.plot('rho', plot_photosphere=True, val_min=1e-4)
-                self.plot('T', log=False, round_to=1000, val_max=4000, plot_photosphere=True)
-
-            t.append(i * dt)
-            L.append(self.luminosity)
-            A.append(self.A_photosphere)
-            R.append(self.R_photosphere)
-            T.append(self.T_photosphere)
-
-        t = np.array(t)
-        L, A, R, T = np.array(L), np.array(A), np.array(R), np.array(T)
-
-        i_half = np.argmin((L / L[0]) > 0.5)
-        i_tenth = np.argmin((L / L[0]) > 0.1)
-        t_half = t[i_half]
-        t_tenth = t[i_tenth]
-
-        self.verbose = True
-
-        return t, L, A, R, T, total_mass_loss, t_half, t_tenth
-
-    def long_term_evolution_v2(self, max_time=100, max_count=1000, plot=False, plot_interval=1, save_name='impact', plot_max=20):
+    # cools the post impact body for a longer period (times are given in years)
+    def long_term_evolution(self, max_time=100, max_count=1000,
+                            plot=False, plot_interval=1, save_name='impact', plot_max=20):
 
         print('Cooling...')
 
@@ -741,6 +688,7 @@ class photosphere:
 
         return t, L, A, R, T, m_dot, t_half, t_quarter, t_tenth
 
+    # performs the initial cooling, removes droplets and calculates the photosphere
     def set_up(self):
 
         self.initial_cool_v2(1.5e5)
@@ -750,6 +698,7 @@ class photosphere:
 
         self.get_photosphere()
 
+    # checks for any NaNs in the data and replaces the NaNs with nearby values if any are found
     def nan_check(self):
 
         if self.verbose:
@@ -767,15 +716,3 @@ class photosphere:
         self.data['m'] = self.data['rho'] * self.data['V']
         self.data['E'] = self.data['u'] * self.data['m']
 
-                # nan_mask = np.isnan(self.data[k])
-                # print(f'NaNs found in {k}')
-                # self.data['test'] = nan_mask * 1
-                # self.plot('test', log=False, cmap='cubehelix')
-
-                # for k2 in self.data.keys():
-                #     print(f'{k2}: {self.data[k2][nan_mask]}')
-
-
-if __name__ == '__main__':
-    snap = snapshot('snapshots/basic_twin/snapshot_0411.hdf5')
-    phot = photosphere(snap, n_theta=50)

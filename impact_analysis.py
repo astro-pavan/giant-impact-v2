@@ -151,8 +151,8 @@ def light_curves(indexes):
         phot = photosphere(snap, 12 * Rearth, hill_radius * Rearth, resolution, n_theta=n_theta, n_phi=n_phi)
         phot.set_up()
         L0.append(phot.luminosity / L_sun)
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution_v2(save_name=f'impact{i}', plot=False,
-                                                                          plot_interval=0.1)
+        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution(save_name=f'impact{i}', plot=False,
+                                                                       plot_interval=0.1)
         light_curve.append(lum)
         time.append(t)
         AM.append(snap.total_angular_momentum)
@@ -245,8 +245,8 @@ def changing_mass():
         phot = photosphere(snap, 12 * Rearth, hill_radius * Rearth, resolution, n_theta=n_theta, n_phi=n_phi)
         phot.set_up()
         L0.append(phot.luminosity / L_sun)
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution_v2(save_name=f'impact{i}', plot=False,
-                                                                          plot_interval=0.1)
+        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution(save_name=f'impact{i}', plot=False,
+                                                                       plot_interval=0.1)
         light_curve.append(lum)
         time.append(t)
         AM.append(snap.total_angular_momentum)
@@ -334,8 +334,8 @@ def changing_impact_parameter():
         phot = photosphere(snap, 12 * Rearth, hill_radius * Rearth, resolution, n_theta=n_theta, n_phi=n_phi)
         phot.set_up()
         L0.append(phot.luminosity / L_sun)
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution_v2(save_name=f'impact{i}', plot=False,
-                                                                          plot_interval=0.1)
+        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution(save_name=f'impact{i}', plot=False,
+                                                                       plot_interval=0.1)
         light_curve.append(lum)
         time.append(t)
         AM.append(snap.total_angular_momentum)
@@ -411,8 +411,8 @@ def changing_mass_with_impact_parameter():
         phot = photosphere(snap, 12 * Rearth, hill_radius * Rearth, resolution, n_theta=n_theta, n_phi=n_phi)
         phot.set_up()
         L0.append(phot.luminosity / L_sun)
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution_v2(save_name=f'impact{i}', plot=False,
-                                                                          plot_interval=0.1)
+        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution(save_name=f'impact{i}', plot=False,
+                                                                       plot_interval=0.1)
         light_curve.append(lum)
         time.append(t)
         AM.append(snap.total_angular_momentum)
@@ -489,8 +489,8 @@ def changing_mass_with_mass_ratio():
         phot = photosphere(snap, 12 * Rearth, hill_radius * Rearth, resolution, n_theta=n_theta, n_phi=n_phi)
         phot.set_up()
         L0.append(phot.luminosity / L_sun)
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution_v2(save_name=f'impact{i}', plot=False,
-                                                                          plot_interval=0.1)
+        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution(save_name=f'impact{i}', plot=False,
+                                                                       plot_interval=0.1)
         light_curve.append(lum)
         time.append(t)
         AM.append(snap.total_angular_momentum)
@@ -554,7 +554,7 @@ def mass_luminosity_plots():
         phot.set_up()
         L0.append(phot.luminosity / L_sun)
 
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution_v2()
+        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution()
         t_cool.append(t2)
 
     for i in mass_impact_parameter_indexes:
@@ -565,7 +565,7 @@ def mass_luminosity_plots():
         phot.set_up()
         L0_b.append(phot.luminosity / L_sun)
 
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution_v2()
+        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution()
         t_cool_b.append(t2)
 
     for i in mass_mass_ratio_indexes:
@@ -576,7 +576,7 @@ def mass_luminosity_plots():
         phot.set_up()
         L0_r.append(phot.luminosity / L_sun)
 
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution_v2()
+        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution()
         t_cool_r.append(t2)
 
     t_cool = np.array(t_cool)
@@ -634,7 +634,7 @@ def generate_table():
         phot.set_up()
         L0[i] = phot.luminosity / L_sun
 
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution_v2()
+        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution()
 
         cool_time[i] = t2 / day
 
@@ -673,7 +673,7 @@ def single_analysis(i):
     except ValueError:
         plt.close()
 
-    time, lum, A, R, T, m_dot, t_half, t_quarter, t_tenth = phot.long_term_evolution_v2()
+    time, lum, A, R, T, m_dot, t_half, t_quarter, t_tenth = phot.long_term_evolution()
     plt.plot(time / yr, lum / L_sun)
     plt.show()
 
@@ -825,27 +825,27 @@ def test_hill_sphere():
         phot_60_no_infall.set_up()
 
         L0_15.append(phot_15.luminosity / L_sun)
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot_15.long_term_evolution_v2()
+        t, lum, A, R, T, m_dot, t2, t4, t10 = phot_15.long_term_evolution()
         t_cool_15.append(t2 / day)
 
         L0_30.append(phot_30.luminosity / L_sun)
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot_30.long_term_evolution_v2()
+        t, lum, A, R, T, m_dot, t2, t4, t10 = phot_30.long_term_evolution()
         t_cool_30.append(t2 / day)
 
         L0_60.append(phot_60.luminosity / L_sun)
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot_60.long_term_evolution_v2()
+        t, lum, A, R, T, m_dot, t2, t4, t10 = phot_60.long_term_evolution()
         t_cool_60.append(t2 / day)
 
         L0_15_no_infall.append(phot_15_no_infall.luminosity / L_sun)
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot_15_no_infall.long_term_evolution_v2()
+        t, lum, A, R, T, m_dot, t2, t4, t10 = phot_15_no_infall.long_term_evolution()
         t_cool_15_no_infall.append(t2 / day)
 
         L0_30_no_infall.append(phot_30_no_infall.luminosity / L_sun)
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot_30_no_infall.long_term_evolution_v2()
+        t, lum, A, R, T, m_dot, t2, t4, t10 = phot_30_no_infall.long_term_evolution()
         t_cool_30_no_infall.append(t2 / day)
 
         L0_60_no_infall.append(phot_60_no_infall.luminosity / L_sun)
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot_60_no_infall.long_term_evolution_v2()
+        t, lum, A, R, T, m_dot, t2, t4, t10 = phot_60_no_infall.long_term_evolution()
         t_cool_60_no_infall.append(t2 / day)
 
     total_mass = (m_target + m_impactor)
@@ -895,7 +895,7 @@ def full_plot():
         phot.set_up()
         L0_m.append(phot.luminosity / L_sun)
 
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution_v2()
+        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution()
         t_cool_m.append(t2)
 
     for i in impact_parameter_indexes:
@@ -905,7 +905,7 @@ def full_plot():
         phot = photosphere(snap, 12 * Rearth, hill_radius * Rearth, resolution, n_theta=n_theta, n_phi=n_phi)
         phot.set_up()
         L0_b.append(phot.luminosity / L_sun)
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution_v2()
+        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution()
         t_cool_b.append(t2)
 
     for i in mass_impact_parameter_indexes:
@@ -916,7 +916,7 @@ def full_plot():
         phot.set_up()
         L0_mb.append(phot.luminosity / L_sun)
 
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution_v2()
+        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution()
         t_cool_mb.append(t2)
 
     for i in mass_mass_ratio_indexes:
@@ -927,7 +927,7 @@ def full_plot():
         phot.set_up()
         L0_mr.append(phot.luminosity / L_sun)
 
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution_v2()
+        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution()
         t_cool_mr.append(t2)
 
     t_cool_m = np.array(t_cool_m)

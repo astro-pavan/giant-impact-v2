@@ -58,10 +58,10 @@ class photosphere:
     def __init__(self, snapshot, sample_size=12*Rearth, max_size=50*Rearth,
                  resolution=500, n_theta=100, n_phi=10, droplet_infall=True):
 
-        self.j_phot = np.zeros(n_theta + 1)
+        self.j_phot = np.zeros(n_theta)
         self.luminosity = 0
         self.T_photosphere, self.A_photosphere, self.R_photosphere = 0, 0, 0
-        self.R_phot, self.z_phot = np.zeros(n_theta + 1), np.zeros(n_theta + 1)
+        self.R_phot, self.z_phot = np.zeros(n_theta), np.zeros(n_theta)
 
         sample_size.convert_to_units(Rearth)
         max_size.convert_to_units(Rearth)
@@ -71,7 +71,7 @@ class photosphere:
 
         # calculates the indexes to sample from to fill the array
         r_range = np.linspace(0, sample_size.value * 0.95, num=int(resolution / 2)) * Rearth
-        theta_range = np.arange(n_theta + 1) * (np.pi / n_theta)
+        theta_range = np.arange(n_theta) * (np.pi / n_theta)
         r, theta = np.meshgrid(r_range, theta_range)
         pixel_size = sample_size.value / (resolution / 2)
         i_R = np.int32((r.value * np.sin(theta) / pixel_size) + (resolution / 2))
@@ -176,6 +176,7 @@ class photosphere:
         theta, d_theta = self.data['theta'], self.data['d_theta']
         self.data['A_r+'] = 2 * pi * ((r + dr) ** 2) * (cos(theta) - cos(theta + d_theta))
         self.data['V'] = (1 / 3) * pi * ((r + dr) ** 3 - r ** 3) * (cos(theta) - cos(theta + d_theta))
+        #self.data['V'] = np.abs(self.data['V'])
 
         # self.data['A_r-'] = 2 * pi * (r ** 2) * (cos(theta) - cos(theta + d_theta))
         # self.data['A_theta-'] = pi * ((r + dr) ** 2 - r ** 2) * sin(theta)
@@ -476,54 +477,19 @@ class photosphere:
     # initially cools the post impact body to account for cooling not performed by SWIFT
     def initial_cool(self, max_time):
 
-        photosphere_mask = self.data['tau'] < photosphere_depth
-
-        tau = self.data['alpha_v'] * self.data['dr']
-        emissivity = 1 - np.exp(-tau) + tau * exp1(tau)
-        L = sigma * self.data['T'] ** 4 * self.data['A_r+'] * emissivity
-        t_cool = self.data['E'] / L
-
-        # t_cool = np.where(~photosphere_mask, t_cool, 0)
-        t_cool_total = np.flip(np.cumsum(np.flip(t_cool, axis=1), axis=1), axis=1)
-
-        t_cool_per_dr = (t_cool / self.data['dr']) * R_earth
-
-        self.data['test'] = t_cool_per_dr
-        self.plot('test', plot_photosphere=True)
-
-        max_time_mask = t_cool_total < max_time
-        cool_mask = max_time_mask | photosphere_mask
-
-        self.data['test'] = cool_mask * 1
-        self.plot('test', log=False, plot_photosphere=True)
-
-        r_cool = np.min(self.data['r'][max_time_mask])
-        cool_mask = self.data['r'] > r_cool
-
-        self.data['test'] = cool_mask * 1
-        self.plot('test', plot_photosphere=True, log=False)
-
         u1, rho, T1 = self.data['u'], self.data['rho'], np.array(self.data['T'])
-        cool_factor = np.minimum(max_time / t_cool, 0.75)
-        du = cool_factor * u1
-        u2 = u1 - du
-        T2 = fst.T2_EOS(u2, rho)
+        alpha = self.data['alpha']
+        A = self.data['A_r+']
+        V = self.data['V']
+        L = V / A
 
-        self.data['u'] = u2
-        self.data['T'] = np.where(cool_mask, T2, T1)
-        self.data['P'] = fst.P_EOS(rho, T2)
-        self.data['s'] = fst.S_EOS(rho, T2)
-        self.calculate_EOS()
+        emissivity = np.minimum(1 - np.exp(-alpha * L), 1)
+        t_cool = (rho * u1 * L) / (sigma * (T1 ** 4) * emissivity)
 
-    # initially cools the post impact body to account for cooling not performed by SWIFT
-    def initial_cool_v2(self, max_time):
+        t_cool = np.flip(np.cumsum(np.flip(t_cool, axis=1), axis=1), axis=1)
 
-        u1, rho, T1 = self.data['u'], self.data['rho'], np.array(self.data['T'])
-        tau = self.data['alpha_v'] * R_earth
-
-        emissivity = 1 - np.exp(-tau) + tau * exp1(tau)
-        F = sigma * T1 ** 4 * emissivity
-        t_cool = ((u1 * rho) / F) * R_earth
+        self.data['t_cool'] = t_cool
+        self.plot('t_cool', log=True, val_max=1e8, val_min=1e2, contours=[4, 5, 6])
 
         min_cooling_time = np.nanmin(t_cool)
         # dt = min_cooling_time * 0.9
@@ -555,62 +521,32 @@ class photosphere:
         photosphere_mask = self.data['tau'] > photosphere_depth
         pressure_mask = self.data['P'] < pressure_shell
         energy_mask = photosphere_mask & pressure_mask
-        outer_mask = (self.data['tau'] > outer_shell_depth) & ~photosphere_mask
 
         u1 = self.data['u']
-        P1 = self.data['P']
 
         # cool inner region
         m_in = np.sum(self.data['m'][energy_mask])
         E_in = np.sum(self.data['E'][energy_mask])
-        E1 = np.array(self.data['E'])
         dE_in = self.luminosity * dt
         u_avg_in = E_in / m_in
         du_in = dE_in / m_in
         k = (1 - du_in / u_avg_in) if m_in > 0 else 1
-        assert k <= 1
-        k = np.maximum(k, 0.1)
+
         u2_in = u1 * k
+        u2 = np.where(pressure_mask, u2_in, u1)
 
-        t_cool_estimated = E_in / self.luminosity
+        assert k <= 1
 
-        # assert dt < t_cool_estimated or m_in == 0
-        r = self.data['r']
-        r_phot = self.R_photosphere
-        equilibrium_temp = (0.5 ** 0.25) * ((r_phot / r) ** 0.5) * self.T_photosphere
-        equilibrium_temp = np.where(~photosphere_mask & (r > r_phot), equilibrium_temp, np.nan)
-        # test = np.sign(self.data['T'] - equilibrium_temp)
-        # plt.imshow(test)
-        # plt.show()
-        # self.data['test'] = test
-        # self.plot('test', log=False, round_to=1, plot_photosphere=True)
-
-        self.data['u'] = np.where(pressure_mask, u2_in, u1)
+        self.data['u'] = u2
         self.data['T'] = fst.T2_EOS(self.data['u'], self.data['rho'])
         self.data['P'] = fst.P_EOS(self.data['rho'], self.data['T'])
         self.data['S'] = fst.S_EOS(self.data['rho'], self.data['T'])
         self.calculate_EOS()
         self.get_photosphere()
 
-        E2 = self.data['E']
-        E_in_after = np.sum(self.data['E'][energy_mask])
-
-        if E_in_after > E_in:
-            mask = ((E1 > E2) & energy_mask)
-            plt.scatter(u1[mask], P1[mask], s=5, c='red')
-            plt.scatter(u1[~mask], P1[~mask], s=5, c='blue')
-            plt.plot(fst.NewEOS.vc.Sv, fst.NewEOS.vc.Uv)
-            plt.yscale('log')
-            plt.show()
-            self.nan_check()
-            print(k)
-            print(f'{E_in_after - E_in:.2e}')
-            assert E_in_after < E_in
-
         if self.verbose:
             print(f'Cooling by {du_in / u_avg_in:.3%} over {dt / (3600 * 24):.2f} days')
             print(f'Energy loss inner region: {dE_in:.2e} ({du_in / u_avg_in:.3%})')
-        # print(f'Energy loss outer region: {dE_out:.2e} ({du_out / u_avg_out:.3%})')
 
     # cools the post impact body for a longer period (times are given in years)
     def long_term_evolution(self, max_time=100, max_count=1000,
@@ -643,17 +579,12 @@ class photosphere:
             E_in = np.sum(self.data['E'][(self.data['tau'] > photosphere_depth) & (self.data['P'] < pressure_shell)])
             t_cool_estimated = E_in / self.luminosity
 
-            dt = (t_cool_estimated / 50) if t_current > 1 * yr else 0.08 * yr
+            dt = (t_cool_estimated / 50) if t_current > 1 * yr else 0.02 * yr
             t_current += dt
             t_plot += dt
 
             self.nan_check()
-
-            try:
-                self.cool_step(dt)
-            except AssertionError:
-                if t_current > 10 * yr:
-                    break
+            self.cool_step(dt)
 
             mass_loss = self.remove_droplets(check_alpha=True, dt=dt) if self.droplet_infall else 0
 
@@ -683,15 +614,14 @@ class photosphere:
         i_quarter = np.argmin((L / L[0]) > 0.25)
         i_tenth = np.argmin((L / L[0]) > 0.1)
         t_half = t[i_half]
-        t_quarter = t[i_quarter]
         t_tenth = t[i_tenth]
 
-        return t, L, A, R, T, m_dot, t_half, t_quarter, t_tenth
+        return t, L, A, R, T, m_dot, t_half, t_tenth
 
     # performs the initial cooling, removes droplets and calculates the photosphere
     def set_up(self):
 
-        self.initial_cool_v2(1.5e5)
+        self.initial_cool(1e5)
         self.nan_check()
         if self.droplet_infall:
             self.remove_droplets()

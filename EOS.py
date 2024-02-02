@@ -276,7 +276,7 @@ P_EOS = lambda rho, T: P_interp(make_into_pair_array(rho, T))
 S_EOS = lambda rho, T: S_interp(make_into_pair_array(rho, T))
 u_EOS = lambda rho, T: u_interp(make_into_pair_array(rho, T))
 cs_EOS = lambda rho, T: cs_interp(make_into_pair_array(rho, T))
-rho_EOS = lambda S, P: rho_interp(make_into_pair_array(S, np.log10(P)))
+rho_EOS = lambda S, P: np.maximum(rho_interp(make_into_pair_array(S, np.log10(P))), 0)
 T1_EOS = lambda S, P: T_interp(make_into_pair_array(S, np.log10(P)))
 T2_EOS = lambda u, rho: T2_interp(make_into_pair_array(u, np.log10(rho)))
 

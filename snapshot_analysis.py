@@ -50,7 +50,8 @@ data_labels = {
     "vq": "Vapor quality",
     "lvf": "Liquid volume fraction",
     "shell": "",
-    "test": ""
+    "t_infall": "Infall time (s)",
+    "test": "",
 }
 
 # colormaps associated with each variable

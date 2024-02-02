@@ -87,6 +87,8 @@ class snapshot:
         self.total_mass.convert_to_units(M_earth)
         print(f'Total mass of particles {self.total_mass:.4e}')
         self.total_mass.convert_to_mks()
+        self.total_mass = self.total_mass.value
+
 
         self.total_angular_momentum = 0
         self.total_specific_angular_momentum = 0
@@ -237,6 +239,7 @@ class snapshot:
         self.total_angular_momentum = np.sum(h * masses)
         self.total_angular_momentum.convert_to_mks()
         print(f'Total angular momentum of particles {self.total_angular_momentum:.4e}')
+        self.total_angular_momentum = self.total_angular_momentum.value
 
         self.total_specific_angular_momentum = np.sum(h) * ((m ** 2)/s)
         self.total_specific_angular_momentum.convert_to_mks()
@@ -325,7 +328,7 @@ class snapshot:
 
         CoRoL = b0 * m
 
-        omega_keplerian = lambda R: np.sqrt((6.674e-11 * self.total_mass.value) / (R ** 3))
+        omega_keplerian = lambda R: np.sqrt((6.674e-11 * self.total_mass) / (R ** 3))
 
         x2 = np.logspace(b0, 10)
         x1 = np.logspace(4, b0)

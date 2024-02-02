@@ -144,8 +144,6 @@ def light_curves(indexes):
     light_curve = []
     time = []
     t_half = []
-    t_quarter = []
-    t_tenth = []
 
     for i in indexes:
         filename = get_filename(i, 4)
@@ -154,19 +152,15 @@ def light_curves(indexes):
         phot = photosphere(snap, 12 * Rearth, hill_radius * Rearth, resolution, n_theta=n_theta, n_phi=n_phi)
         phot.set_up()
         L0.append(phot.luminosity / L_sun)
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution(save_name=f'impact{i}', plot=False,
+        t, lum, A, R, T, m_dot, t2, t10 = phot.long_term_evolution(save_name=f'impact{i}', plot=False,
                                                                        plot_interval=0.1)
         light_curve.append(lum)
         time.append(t)
         AM.append(snap.total_angular_momentum)
         SAM.append(snap.total_specific_angular_momentum)
         t_half.append(t2)
-        t_quarter.append(t4)
-        t_tenth.append(t10)
 
     t_half = np.array(t_half)
-    t_quarter = np.array(t_quarter)
-    t_tenth = np.array(t_tenth)
 
     plt.figure(figsize=(8, 6))
 
@@ -255,7 +249,7 @@ def generate_table():
         phot.set_up()
         L0[i] = phot.luminosity / L_sun
 
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution()
+        t, lum, A, R, T, m_dot, t2, t10 = phot.long_term_evolution()
 
         cool_time[i] = t2 / day
 
@@ -276,7 +270,7 @@ def single_analysis(filename):
     snap = snapshot(filename)
     # s = gas_slice(snap, size=20)
     # s.full_plot()
-    phot = photosphere(snap, 12 * Rearth, hill_radius * Rearth, 500, n_theta=40)
+    phot = photosphere(snap, 12 * Rearth, hill_radius * Rearth, 2000, n_theta=40)
 
     # phot.plot('rho', plot_photosphere=True)
     # phot.plot('T', log=False, round_to=1000, plot_photosphere=True, val_max=8000)
@@ -285,27 +279,24 @@ def single_analysis(filename):
 
     phot.set_up()
 
-    try:
-        phot.plot('rho', plot_photosphere=True)
-        phot.plot('T', log=False, round_to=1000, plot_photosphere=True, val_max=8000)
-        phot.plot('P', plot_photosphere=True)
-        phot.plot('phase', log=False, round_to=1, plot_photosphere=True)
-        phot.plot('tau', plot_photosphere=True)
-    except ValueError:
-        plt.close()
+    # phot.plot('rho', plot_photosphere=True)
+    # phot.plot('T', log=False, round_to=1000, plot_photosphere=True, val_max=8000)
+    # phot.plot('P', plot_photosphere=True)
+    # phot.plot('t_infall', plot_photosphere=True, val_min=1e-2, val_max=1e8)
+    plt.close()
 
-    time, lum, A, R, T, m_dot, t_half, t_quarter, t_tenth = phot.long_term_evolution()
+    time, lum, A, R, T, m_dot, t_half, t_tenth = phot.long_term_evolution()
     plt.plot(time / yr, lum / L_sun)
     plt.show()
 
-    plt.plot(time / yr, R)
-    plt.show()
-
-    plt.plot(time / yr, A)
-    plt.show()
-
-    plt.plot(time / yr, T)
-    plt.show()
+    # plt.plot(time / yr, R)
+    # plt.show()
+    #
+    # plt.plot(time / yr, A)
+    # plt.show()
+    #
+    # plt.plot(time / yr, T)
+    # plt.show()
 
 
 # produces a plot showing a series of impacts
@@ -435,7 +426,7 @@ def full_plot():
         phot.set_up()
         L0_m.append(phot.luminosity / L_sun)
 
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution()
+        t, lum, A, R, T, m_dot, t2, t10 = phot.long_term_evolution()
         t_cool_m.append(t2)
 
     for i in impact_parameter_indexes:
@@ -445,7 +436,7 @@ def full_plot():
         phot = photosphere(snap, 12 * Rearth, hill_radius * Rearth, resolution, n_theta=n_theta, n_phi=n_phi)
         phot.set_up()
         L0_b.append(phot.luminosity / L_sun)
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution()
+        t, lum, A, R, T, m_dot, t2, t10 = phot.long_term_evolution()
         t_cool_b.append(t2)
 
     for i in mass_impact_parameter_indexes:
@@ -456,7 +447,7 @@ def full_plot():
         phot.set_up()
         L0_mb.append(phot.luminosity / L_sun)
 
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution()
+        t, lum, A, R, T, m_dot, t2, t10 = phot.long_term_evolution()
         t_cool_mb.append(t2)
 
     for i in mass_mass_ratio_indexes:
@@ -467,7 +458,7 @@ def full_plot():
         phot.set_up()
         L0_mr.append(phot.luminosity / L_sun)
 
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution()
+        t, lum, A, R, T, m_dot, t2, t10 = phot.long_term_evolution()
         t_cool_mr.append(t2)
 
     t_cool_m = np.array(t_cool_m)
@@ -554,27 +545,27 @@ def test_hill_sphere():
         phot_60_no_infall.set_up()
 
         L0_15.append(phot_15.luminosity / L_sun)
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot_15.long_term_evolution()
+        t, lum, A, R, T, m_dot, t2, t10 = phot_15.long_term_evolution()
         t_cool_15.append(t2 / day)
 
         L0_30.append(phot_30.luminosity / L_sun)
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot_30.long_term_evolution()
+        t, lum, A, R, T, m_dot, t2, t10 = phot_30.long_term_evolution()
         t_cool_30.append(t2 / day)
 
         L0_60.append(phot_60.luminosity / L_sun)
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot_60.long_term_evolution()
+        t, lum, A, R, T, m_dot, t2, t10 = phot_60.long_term_evolution()
         t_cool_60.append(t2 / day)
 
         L0_15_no_infall.append(phot_15_no_infall.luminosity / L_sun)
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot_15_no_infall.long_term_evolution()
+        t, lum, A, R, T, m_dot, t2, t10 = phot_15_no_infall.long_term_evolution()
         t_cool_15_no_infall.append(t2 / day)
 
         L0_30_no_infall.append(phot_30_no_infall.luminosity / L_sun)
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot_30_no_infall.long_term_evolution()
+        t, lum, A, R, T, m_dot, t2, t10 = phot_30_no_infall.long_term_evolution()
         t_cool_30_no_infall.append(t2 / day)
 
         L0_60_no_infall.append(phot_60_no_infall.luminosity / L_sun)
-        t, lum, A, R, T, m_dot, t2, t4, t10 = phot_60_no_infall.long_term_evolution()
+        t, lum, A, R, T, m_dot, t2, t10 = phot_60_no_infall.long_term_evolution()
         t_cool_60_no_infall.append(t2 / day)
 
     total_mass = (m_target + m_impactor)
@@ -613,10 +604,12 @@ def test_hill_sphere():
 
 
 if __name__ == '__main__':
-    example_extrapolation()
-    generate_table()
-    phase_diagram(get_filename(1, 4))
-    impact_plots()
-    light_curves(mass_indexes)
-    full_plot()
-    test_hill_sphere()
+    single_analysis(get_filename(0, 4))
+
+    # example_extrapolation()
+    # generate_table()
+    # phase_diagram(get_filename(5, 4))
+    # impact_plots()
+    # light_curves(mass_indexes)
+    # full_plot()
+    # test_hill_sphere()

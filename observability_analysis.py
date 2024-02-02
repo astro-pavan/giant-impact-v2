@@ -1,3 +1,5 @@
+# analyses the observability of post impact bodies with Gaia
+
 import gdr3bcg.bcg as bcg
 correction_table = bcg.BolometryTable()
 from astroquery.gaia import Gaia
@@ -7,13 +9,11 @@ from unyt import Rearth
 import numpy as np
 import pandas as pd
 from scipy.optimize import curve_fit
-from scipy.stats import linregress
 from scipy.interpolate import interp1d
 import matplotlib.pyplot as plt
-from matplotlib.colors import LogNorm, SymLogNorm
 
-from snapshot_analysis import snapshot, gas_slice, data_labels
-from photosphere import photosphere, M_earth, L_sun, yr
+from snapshot_analysis import snapshot
+from photosphere import photosphere, L_sun, yr
 from impact_analysis import get_filename
 
 impact_luminosity = 5e-3  # L_sun

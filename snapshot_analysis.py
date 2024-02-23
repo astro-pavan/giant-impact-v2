@@ -356,8 +356,7 @@ class snapshot:
             # plt.xlim([1e-1, 1e2])
             # plt.ylim([1e-8, 1e-2])
             plt.legend()
-            # plt.xscale('log')
-            # plt.yscale('log')
+            plt.colorbar(label='Number of particles')
 
             plt.savefig('figures/rotation.png', bbox_inches='tight')
             plt.savefig('figures/rotation.pdf', bbox_inches='tight')
@@ -437,7 +436,7 @@ class gas_slice:
         except AttributeError:
             pass
 
-        self.data['rho'].convert_to_units(g / cm ** 3)
+        # self.data['rho'].convert_to_units(g / cm ** 3)
 
     # generates the ticks used in the plots
     def ticks(self):
@@ -465,14 +464,19 @@ class gas_slice:
         return x_tick_pos, x_tick_label, y_tick_pos, y_tick_label
 
     # plots a heatmap for a certain parameter
-    def plot(self, parameter, show=True, save=None, log=True, threshold=None, ax=None, colorbar=True, curve=None, curve_label=''):
+    def plot(self, parameter, show=True, save=None, log=True, threshold=None, ax=None, colorbar=True, curve=None, curve_label='', val_max=None):
 
         if ax is None:
             fig, ax = plt.subplots()
         x_tick_pos, x_tick_label, y_tick_pos, y_tick_label = self.ticks()
 
         if threshold is not None:
-            img = ax.imshow(self.data[parameter].value, cmap=colormaps[parameter], norm=SymLogNorm(linthresh=threshold))
+            if val_max is not None:
+                img = ax.imshow(self.data[parameter].value, cmap=colormaps[parameter],
+                                norm=SymLogNorm(linthresh=threshold, vmax=val_max))
+            else:
+                img = ax.imshow(self.data[parameter].value, cmap=colormaps[parameter],
+                                norm=SymLogNorm(linthresh=threshold))
         elif log:
             img = ax.imshow(self.data[parameter].value, cmap=colormaps[parameter], norm=LogNorm())
         else:
@@ -504,7 +508,7 @@ class gas_slice:
             plt.show()
             plt.close()
 
-        return ax
+        return ax, img
 
     # produces a plot of rho, T, P, S
     def full_plot(self, show=True, save=None):

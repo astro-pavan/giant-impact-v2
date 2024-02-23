@@ -55,13 +55,8 @@ def get_v(R, z, a):
 class photosphere:
 
     # sample size and max size both have units
-    def __init__(self, snapshot, sample_size=12*Rearth, max_size=50*Rearth,
+    def __init__(self, snapshot, sample_size=12*Rearth, max_size=50*Rearth, period=None,
                  resolution=500, n_theta=100, n_phi=10, droplet_infall=True):
-
-        self.j_phot = np.zeros(n_theta)
-        self.luminosity = 0
-        self.T_photosphere, self.A_photosphere, self.R_photosphere = 0, 0, 0
-        self.R_phot, self.z_phot = np.zeros(n_theta), np.zeros(n_theta)
 
         sample_size.convert_to_units(Rearth)
         max_size.convert_to_units(Rearth)
@@ -69,9 +64,25 @@ class photosphere:
         self.data = {}
         self.droplet_infall = droplet_infall
 
+        self.j_phot = np.zeros(n_theta+1)
+        self.luminosity = 0
+        self.T_photosphere, self.A_photosphere, self.R_photosphere = 0, 0, 0
+        self.R_phot, self.z_phot = np.zeros(n_theta+1), np.zeros(n_theta+1)
+
+        self.central_mass = self.snapshot.total_mass
+
+        if period is not None:
+            G = 6.67430e-11
+            max_size_mks = ((G * self.central_mass * period * period) / (12 * np.pi * np.pi)) ** (1 / 3)
+            max_size = (max_size_mks / 6371000) * Rearth
+            print(f'Hill radius = {max_size}')
+
+        if max_size < sample_size:
+            sample_size = max_size
+
         # calculates the indexes to sample from to fill the array
         r_range = np.linspace(0, sample_size.value * 0.95, num=int(resolution / 2)) * Rearth
-        theta_range = np.arange(n_theta) * (np.pi / n_theta)
+        theta_range = np.arange(n_theta+1) * (np.pi / n_theta)
         r, theta = np.meshgrid(r_range, theta_range)
         pixel_size = sample_size.value / (resolution / 2)
         i_R = np.int32((r.value * np.sin(theta) / pixel_size) + (resolution / 2))
@@ -174,14 +185,9 @@ class photosphere:
 
         r, dr = self.data['r'], self.data['dr']
         theta, d_theta = self.data['theta'], self.data['d_theta']
-        self.data['A_r+'] = 2 * pi * ((r + dr) ** 2) * (cos(theta) - cos(theta + d_theta))
+        self.data['A'] = 2 * pi * ((r + dr) ** 2) * (cos(theta) - cos(theta + d_theta))
         self.data['V'] = (1 / 3) * pi * ((r + dr) ** 3 - r ** 3) * (cos(theta) - cos(theta + d_theta))
-        #self.data['V'] = np.abs(self.data['V'])
-
-        # self.data['A_r-'] = 2 * pi * (r ** 2) * (cos(theta) - cos(theta + d_theta))
-        # self.data['A_theta-'] = pi * ((r + dr) ** 2 - r ** 2) * sin(theta)
-        # self.data['A_theta+'] = pi * ((r + dr) ** 2 - r ** 2) * sin(theta + d_theta)
-        # self.data['A_theta+'][-1, :] = np.zeros_like(self.data['A_theta+'][-1, :])
+        self.data['V'] = np.abs(self.data['V'])
 
         # these values are used to calculate the index in the array for a given r and theta
         self.i_per_theta = n_theta / np.pi
@@ -192,14 +198,14 @@ class photosphere:
         # linear eccentricity of the extrapolation surface
         self.linear_eccentricity = np.sqrt(self.R_min ** 2 - self.z_min ** 2)
 
-        self.central_mass = self.snapshot.total_mass.value
         self.data['test'] = self.data['h'] * (self.data['R'] ** -2)
 
-        # self.t_dyn = np.sqrt((max_size.value ** 3) / (6.674e-11 * self.central_mass))
-
         # extrapolation performed here
-        self.entropy_extrapolation = self.extrapolate_entropy()
-        self.hydrostatic_equilibrium(initial_extrapolation=True)
+        if sample_size < max_size:
+            self.entropy_extrapolation = self.extrapolate_entropy()
+            self.hydrostatic_equilibrium(initial_extrapolation=True)
+        else:
+            self.data['u'] = fst.u_EOS(self.data['rho'], self.data['T'])
 
         self.calculate_EOS()
 
@@ -417,7 +423,7 @@ class photosphere:
         new_S = fst.condensation_S(self.data['s'], self.data['P'])
         self.data['s'] = np.where(remove_mask, new_S, self.data['s'])
         self.data['rho'] = fst.rho_EOS(self.data['s'], self.data['P'])
-        self.data['T'] = fst.T1_EOS(self.data['s'], self.data['P'])
+        self.data['T'] = np.nan_to_num(fst.T1_EOS(self.data['s'], self.data['P']))
         self.data['u'] = fst.u_EOS(self.data['rho'], self.data['T'])
         self.calculate_EOS()
 
@@ -437,8 +443,10 @@ class photosphere:
             alpha_drop = np.where(condensation_mask, alpha_drop, 0)
 
             alpha_drop_mean = np.sum(alpha_drop * self.data['V']) / np.sum(self.data['V'][condensation_mask])
-            if alpha_drop_mean > 1e-8:
+            if alpha_drop_mean > 1e-8 and self.verbose:
                 print(alpha_drop_mean)
+
+        self.get_photosphere()
 
         return mass_lost
 
@@ -454,7 +462,7 @@ class photosphere:
         i_phot = np.arange(self.n_theta)
 
         phot_indexes = tuple((i_phot, j_phot))
-        # L = (self.data['A_r+'] * sigma * self.data['T'] ** 4)[phot_indexes]
+        # L = (self.data['A'] * sigma * self.data['T'] ** 4)[phot_indexes]
         self.luminosity, self.A_photosphere = 0, 0
         F = (sigma * self.data['T'] ** 4)[phot_indexes]
         self.R_phot = self.data['R'][phot_indexes]
@@ -466,6 +474,8 @@ class photosphere:
             m = (z2 - z1)/(R2 - R1)
             A = np.abs(pi * np.sqrt(1 + m ** 2) * (R2 ** 2 - R1 ** 2))
             self.A_photosphere += A
+            if np.isnan(F[i]):
+                print(i)
             self.luminosity += F[i] * A
 
         if self.verbose:
@@ -479,7 +489,7 @@ class photosphere:
 
         u1, rho, T1 = self.data['u'], self.data['rho'], np.array(self.data['T'])
         alpha = self.data['alpha']
-        A = self.data['A_r+']
+        A = self.data['A']
         V = self.data['V']
         L = V / A
 
@@ -488,11 +498,7 @@ class photosphere:
 
         t_cool = np.flip(np.cumsum(np.flip(t_cool, axis=1), axis=1), axis=1)
 
-        self.data['t_cool'] = t_cool
-        self.plot('t_cool', log=True, val_max=1e8, val_min=1e2, contours=[4, 5, 6])
-
         min_cooling_time = np.nanmin(t_cool)
-        # dt = min_cooling_time * 0.9
 
         if min_cooling_time > max_time:
             if self.verbose:
@@ -538,7 +544,7 @@ class photosphere:
         assert k <= 1
 
         self.data['u'] = u2
-        self.data['T'] = fst.T2_EOS(self.data['u'], self.data['rho'])
+        self.data['T'] = np.nan_to_num(fst.T2_EOS(self.data['u'], self.data['rho']))
         self.data['P'] = fst.P_EOS(self.data['rho'], self.data['T'])
         self.data['S'] = fst.S_EOS(self.data['rho'], self.data['T'])
         self.calculate_EOS()
@@ -572,6 +578,8 @@ class photosphere:
         t_plot = 0
         plot_count = 0
 
+        min_timestep = 0.015
+
         while t[i] < max_time * yr and i < max_count:
 
             i += 1
@@ -579,14 +587,27 @@ class photosphere:
             E_in = np.sum(self.data['E'][(self.data['tau'] > photosphere_depth) & (self.data['P'] < pressure_shell)])
             t_cool_estimated = E_in / self.luminosity
 
-            dt = (t_cool_estimated / 50) if t_current > 1 * yr else 0.02 * yr
+            dt = (t_cool_estimated / 50) if t_current > 1 * yr else min_timestep * yr
             t_current += dt
             t_plot += dt
 
             self.nan_check()
-            self.cool_step(dt)
+            if np.isnan(self.luminosity):
+                plt.plot(np.array(t), np.array(L) / L_sun)
+                plt.show()
+                plt.plot(t, A)
+                plt.show()
+                plt.plot(t, T)
+                plt.show()
+                self.plot('tau', log=True, val_min=1e0, val_max=1e10, plot_photosphere=True)
+                break
+            else:
+                self.cool_step(dt)
 
-            mass_loss = self.remove_droplets(check_alpha=True, dt=dt) if self.droplet_infall else 0
+            if self.droplet_infall:
+                mass_loss = self.remove_droplets(dt=dt)
+            else:
+                mass_loss = 0
 
             t.append(t_current)
             L.append(self.luminosity)
@@ -611,7 +632,6 @@ class photosphere:
         L, A, R, T = np.array(L), np.array(A), np.array(R), np.array(T)
 
         i_half = np.argmin((L / L[0]) > 0.5)
-        i_quarter = np.argmin((L / L[0]) > 0.25)
         i_tenth = np.argmin((L / L[0]) > 0.1)
         t_half = t[i_half]
         t_tenth = t[i_tenth]

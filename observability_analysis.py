@@ -16,17 +16,14 @@ from snapshot_analysis import snapshot
 from photosphere import photosphere, L_sun, yr
 from impact_analysis import get_filename
 
-impact_luminosity = 5e-3  # L_sun
-impact_luminosity_2 = 1e-3  # L_sun
+impact_luminosity = 0.01  # L_sun
 impact_temp = 2800  # K
 
 M_bol_sun = 4.74
 
 M_bol_impact = M_bol_sun - 2.5 * np.log10(impact_luminosity)
-M_bol_impact_2 = M_bol_sun - 2.5 * np.log10(impact_luminosity_2)
 bol_correction_factor = correction_table.computeBc([impact_temp, 0.3, 0, 0])
 M_g_impact = M_bol_impact - bol_correction_factor
-M_g_impact_2 = M_bol_impact_2 - bol_correction_factor
 
 print(f'Absolute magnitude (G-band) of post impact body: {M_g_impact:.2f}')
 
@@ -102,11 +99,13 @@ def gaia_epoch_photometry():
     x = np.linspace(10, 22)
     y = error(x)
 
-    plt.hist2d(mag, np.log10(single), bins=200, cmap='viridis', rasterized=True)
+    plt.hist2d(mag, np.log10(single), bins=100, cmap='viridis', rasterized=True)
     plt.plot(x, np.log10(y), 'r--')
     plt.xlabel('Apparent magnitude (G-band)')
     plt.ylabel('$\log_{10}$[Single flux mean fractional error]')
     plt.gca().invert_xaxis()
+    plt.colorbar(label='Number of observations')
+
     plt.savefig('figures/single_flux_errors.png', bbox_inches='tight')
     plt.savefig('figures/single_flux_errors.pdf', bbox_inches='tight')
     plt.close()
@@ -167,6 +166,7 @@ def gaia_analysis():
     mean_visible_mask = gaia_data['impact_flux_frac_difference'] > 5 * gaia_data['mean_flux_frac_error']
     single_visible_frac = len(gaia_data[single_visible_mask]) / len(gaia_data)
     mean_visible_frac = len(gaia_data[mean_visible_mask]) / len(gaia_data)
+
     print(f'Can detect impacts around {single_visible_frac:.1%} of sample (5-sigma detection) using single measurement error')
     print(f'Can detect impacts around {mean_visible_frac:.1%} of sample (5-sigma detection) using mean measurement error')
 
@@ -174,11 +174,12 @@ def gaia_analysis():
     mean_visible_mask = gaia_data['impact_flux_frac_difference'] > 3 * gaia_data['mean_flux_frac_error']
     single_visible_frac = len(gaia_data[single_visible_mask]) / len(gaia_data)
     mean_visible_frac = len(gaia_data[mean_visible_mask]) / len(gaia_data)
+
     print(f'Can detect impacts around {single_visible_frac:.1%} of sample (3-sigma detection) using single measurement error')
     print(f'Can detect impacts around {mean_visible_frac:.1%} of sample (3-sigma detection) using mean measurement error')
 
     plt.hist2d(np.log10(gaia_data['single_flux_frac_error']), np.log10(gaia_data['impact_flux_frac_difference']),
-               bins=200, cmap='viridis', rasterized=True, density=True)
+               bins=100, cmap='viridis', rasterized=True, density=False)
     plt.xlabel('$\log_{10}$[Flux fractional error]')
     plt.ylabel('$\log_{10}$[Fractional change in flux from impact]')
     x = np.logspace(-4, 0)
@@ -187,7 +188,7 @@ def gaia_analysis():
     plt.plot(np.log10(x), np.log10(y3), 'r-.', label='3-sigma detection')
     plt.plot(np.log10(x), np.log10(y5), 'r--', label='5-sigma detection')
     plt.legend(loc='upper left')
-    plt.colorbar(label='Star density')
+    plt.colorbar(label='Number of stars')
     plt.ylim([-6, 1])
     #plt.xlim([-4, np.nanmax(np.log10(gaia_data['single_flux_frac_error']))])
     plt.savefig('figures/single_detectability.png', bbox_inches='tight')
@@ -274,16 +275,113 @@ def gaia_analysis():
     plt.ylabel('Absolute magnitude (G-band)')
     plt.xlim([np.nanmin(good_stars['teff_gspphot']), 5000])
     plt.axvline(3700, 0, 1, color='white', linestyle='--')
-    plt.annotate('K', (4350, 3), c='white')
-    plt.annotate('M', (3300, 3), c='white')
+    plt.annotate(text='K', xy=(0.25, 0.1), c='white', xycoords='axes fraction')
+    plt.annotate(text='M', xy=(0.75, 0.1), c='white', xycoords='axes fraction')
     plt.colorbar(label='Number of stars')
     plt.gca().invert_yaxis()
     plt.gca().invert_xaxis()
+
     plt.savefig('figures/detectability_HR.png', bbox_inches='tight')
     plt.savefig('figures/detectability_HR.pdf', bbox_inches='tight')
     plt.close()
 
     return good_stars
+
+
+def gaia_analysis_v2():
+
+    single_flux_frac_error = gaia_epoch_photometry()
+
+    print('Loading Gaia sample...')
+    gaia_data = pd.read_csv('gaia_data.csv')
+    print(gaia_data.keys())
+    initial_n = len(gaia_data)
+    print(f'{initial_n} stars loaded')
+
+    gaia_data = gaia_data[gaia_data['phot_g_mean_mag'].notna()]
+    gaia_data = gaia_data[gaia_data['parallax'].notna()]
+    gaia_data['parallax'] = np.abs(gaia_data['parallax']) * 1e-3
+
+    gaia_data['abs_g_mag'] = abs_mag(gaia_data['phot_g_mean_mag'], gaia_data['parallax'])
+
+    mask = (gaia_data['abs_g_mag'] < 20) & (gaia_data['abs_g_mag'] > -20) # & (gaia_data['parallax_over_error'] > 0.1)
+    gaia_data = gaia_data[mask]
+
+    filtered_n = len(gaia_data)
+    print(f'Stars kept after filtering: {filtered_n / initial_n:.2%}')
+
+    gaia_data['single_flux_frac_error'] = single_flux_frac_error(gaia_data['phot_g_mean_mag'])
+
+    delta_F_over_F = gaia_data['single_flux_frac_error']
+    m_g_star = gaia_data['phot_g_mean_mag']
+    p = gaia_data['parallax']
+
+    delta_m = 2.5 * np.log10(1 + delta_F_over_F)
+
+    m_g_I_3_sigma = m_g_star - 2.5 * np.log10((10 ** ((3 * delta_m) / 2.5)) - 1)
+    m_g_I_5_sigma = m_g_star - 2.5 * np.log10((10 ** ((5 * delta_m) / 2.5)) - 1)
+
+    M_g_I_3_sigma = m_g_I_3_sigma + (5 * (np.log10(p) + 1))
+    M_g_I_5_sigma = m_g_I_5_sigma + (5 * (np.log10(p) + 1))
+
+    M_bol_I_3_sigma = M_g_I_3_sigma + bol_correction_factor
+    M_bol_I_5_sigma = M_g_I_5_sigma + bol_correction_factor
+
+    L_I_min_3_sigma = 10 ** (0.4 * (M_bol_sun - M_bol_I_3_sigma))
+    L_I_min_5_sigma = 10 ** (0.4 * (M_bol_sun - M_bol_I_5_sigma))
+
+    detectable_mask = L_I_min_3_sigma < 5e-3
+    frac = len(L_I_min_3_sigma[detectable_mask]) / len(gaia_data)
+
+    print(f'Detectable fraction: {frac:.2%}')
+
+    plt.hist(np.log10(L_I_min_3_sigma), bins=500, density=True, cumulative=True, range=(-4, 3), log=True,
+             histtype='step', label='3-sigma detection')
+    plt.hist(np.log10(L_I_min_5_sigma), bins=500, density=True, cumulative=True, range=(-4, 3), log=True,
+             histtype='step', label='5-sigma detection')
+    plt.legend(loc='lower right')
+    plt.xlabel('Minimum observable impact luminosity ($L_{\odot}$)')
+    plt.ylabel('Fraction of stars')
+
+    xlabels = ['$10^{-3}$', '$10^{-2}$', '$10^{-1}$', '$10^{0}$', '$10^{1}$']
+    xlabel_pos = [-3, -2, -1, 0, 1]
+    plt.xticks(xlabel_pos, xlabels)
+
+    plt.xlim([-3.5, 1])
+    plt.ylim([1e-3, 1e0])
+
+    plt.grid(which='both', axis='y')
+    plt.grid(which='major', axis='x')
+
+    plt.savefig('figures/cumlulative_hist.png', bbox_inches='tight')
+    plt.savefig('figures/cumlulative_hist.pdf', bbox_inches='tight')
+    plt.close()
+
+    potential_stars = gaia_data[detectable_mask]
+
+    nan_mask = potential_stars['bp_rp'].notna() & \
+               potential_stars['abs_g_mag'].notna() & \
+               (potential_stars['parallax_over_error'] > 5) & \
+               potential_stars['teff_gspphot'].notna() & \
+               potential_stars['logg_gspphot'].notna() & \
+               potential_stars['mh_gspphot'].notna()
+
+    good_stars = potential_stars[nan_mask]
+
+    plt.hist2d(good_stars['teff_gspphot'], good_stars['abs_g_mag'], bins=100, cmap='inferno', rasterized=True)
+    plt.xlabel('Temperature (K)')
+    plt.ylabel('Absolute magnitude (G-band)')
+    plt.xlim([np.nanmin(good_stars['teff_gspphot']), 5000])
+    plt.axvline(3700, 0, 1, color='white', linestyle='--')
+    plt.annotate(text='K', xy=(0.25, 0.1), c='white', xycoords='axes fraction')
+    plt.annotate(text='M', xy=(0.75, 0.1), c='white', xycoords='axes fraction')
+    plt.colorbar(label='Number of stars')
+    plt.gca().invert_yaxis()
+    plt.gca().invert_xaxis()
+
+    plt.savefig('figures/detectability_HR_v2.png', bbox_inches='tight')
+    plt.savefig('figures/detectability_HR_v2.pdf', bbox_inches='tight')
+    plt.close()
 
 
 def simulated_light_curve(gaia_entry):
@@ -316,7 +414,7 @@ def simulated_light_curve(gaia_entry):
     phot = photosphere(snap, 12 * Rearth, 60 * Rearth, 800, n_theta=20)
     phot.set_up()
     L0 = phot.luminosity / L_sun
-    time, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution()
+    time, lum, A, R, T, m_dot, t2, t10 = phot.long_term_evolution()
 
     lum = lum / L_sun
     time = time / yr
@@ -332,7 +430,7 @@ def simulated_light_curve(gaia_entry):
     phot = photosphere(snap, 12 * Rearth, 60 * Rearth, 800, n_theta=20)
     phot.set_up()
     L0 = phot.luminosity / L_sun
-    time, lum, A, R, T, m_dot, t2, t4, t10 = phot.long_term_evolution()
+    time, lum, A, R, T, m_dot, t2, t10 = phot.long_term_evolution()
 
     lum = lum / L_sun
     time = time / yr
@@ -362,14 +460,6 @@ def simulated_light_curve(gaia_entry):
     L_3 = np.random.normal(L_3, L_3 * frac_error)
     L_base = np.random.normal(L_base, L_base * frac_error)
 
-    M_bol_2 = M_bol_sun - 2.5 * np.log10(L_2)
-    M_bol_3 = M_bol_sun - 2.5 * np.log10(L_3)
-    M_bol_base = M_bol_sun - 2.5 * np.log10(L_base)
-
-    M_g_2 = M_bol_sun - 2.5 * np.log10(L_2) - bcf
-    M_g_3 = M_bol_sun - 2.5 * np.log10(L_3) - bcf
-    M_g_base = M_bol_sun - 2.5 * np.log10(L_base) - bcf
-
     m_g_2 = M_bol_sun - 2.5 * np.log10(L_2) - bcf - 5 * (np.log10(parallax) + 1)
     m_g_3 = M_bol_sun - 2.5 * np.log10(L_3) - bcf - 5 * (np.log10(parallax) + 1)
     m_g_base = M_bol_sun - 2.5 * np.log10(L_base) - bcf - 5 * (np.log10(parallax) + 1)
@@ -377,17 +467,19 @@ def simulated_light_curve(gaia_entry):
     m_g_2_model = M_bol_sun - 2.5 * np.log10(L_2_model) - bcf - 5 * (np.log10(parallax) + 1)
     m_g_3_model = M_bol_sun - 2.5 * np.log10(L_3_model) - bcf - 5 * (np.log10(parallax) + 1)
 
-    fig, axs = plt.subplots(2, 1, sharex=True)
+    fig, axs = plt.subplots(3, 1, sharex=True)
     fig.set_figwidth(16)
     fig.set_figheight(12)
     plt.subplots_adjust(hspace=0)
+
+    xlim = [-0.5, 3]
 
     axs[0].scatter(t_sample, m_g_2, color='blue', s=10)
     axs[0].errorbar(t_sample, m_g_2, yerr=frac_error, fmt='none', color='blue')
     axs[0].plot(t_continuous, m_g_2_model, 'b--')
     #axs[0].set_ylim([m_g - 0.12, m_g + 0.01])
     axs[0].invert_yaxis()
-    axs[0].set_xlim([-1, 4])
+    axs[0].set_xlim(xlim)
     axs[0].axhline(m_g, 0, 1, color='black', linestyle='--')
 
     axs[1].scatter(t_sample, m_g_3, color='blue', s=10)
@@ -396,16 +488,16 @@ def simulated_light_curve(gaia_entry):
     #axs[1].set_ylim([m_g - 0.12, m_g + 0.01])
     axs[1].invert_yaxis()
     axs[1].set_ylabel('Apparent magnitude (Gaia G-band)')
-    axs[1].set_xlim([-1, 4])
+    axs[1].set_xlim(xlim)
     axs[1].axhline(m_g, 0, 1, color='black', linestyle='--')
 
-    # axs[2].scatter(t_sample, m_g_base, color='blue', s=0.5)
-    # axs[2].errorbar(t_sample, m_g_base, yerr=frac_error, fmt='none', color='blue')
-    # #axs[2].set_ylim([m_g - 0.12, m_g + 0.01])
-    # axs[2].invert_yaxis()
-    # axs[2].set_xlabel('Time (yr)')
-    # axs[2].set_xlim([-1, 4])
-    # axs[2].axh]line(m_g, 0, 1, color='black', linestyle='--')
+    axs[2].scatter(t_sample, m_g_base, color='blue', s=0.5)
+    axs[2].errorbar(t_sample, m_g_base, yerr=frac_error, fmt='none', color='blue')
+    #axs[2].set_ylim([m_g - 0.12, m_g + 0.01])
+    axs[2].invert_yaxis()
+    axs[2].set_xlabel('Time (yr)')
+    axs[2].set_xlim(xlim)
+    axs[2].axhline(m_g, 0, 1, color='black', linestyle='--')
 
     plt.savefig('figures/gaia_light_curve.png', bbox_inches='tight')
     plt.savefig('figures/gaia_light_curve.pdf', bbox_inches='tight')
@@ -423,9 +515,9 @@ def simulated_light_curve(gaia_entry):
 
 
 if __name__ == '__main__':
-    gaia_mean_flux_error_plot()
-    stars = gaia_analysis()
-    simulated_light_curve(stars)
-
+    # gaia_mean_flux_error_plot()
+    # stars = gaia_analysis()
+    # simulated_light_curve(stars)
+    gaia_analysis_v2()
 
 

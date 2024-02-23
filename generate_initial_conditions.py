@@ -157,7 +157,7 @@ def generate_initial_conditions(particle_count, target_mass, mass_ratio, impact_
     data = [
         f'Target mass           :{M_target / M_earth:.4f} Mearth\n',
         f'Target spin period    :{spin_period} hours\n',
-        f'Impactor mass         :{M_target / M_earth:.4f} Mearth\n',
+        f'Impactor mass         :{M_impactor / M_earth:.4f} Mearth\n',
         f'Mass ratio            :{mass_ratio:.4f}\n'
         f'Impact velocity       :{A1_vel_i} m/s ({impact_velocity:.1f} v_esc)\n',
         f'Impact parameter      :{impact_parameter}\n',

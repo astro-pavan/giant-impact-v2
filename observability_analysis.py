@@ -11,6 +11,7 @@ import pandas as pd
 from scipy.optimize import curve_fit
 from scipy.interpolate import interp1d
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 from snapshot_analysis import snapshot
 from photosphere import photosphere, L_sun, yr
@@ -304,11 +305,11 @@ def gaia_analysis_v2():
 
     gaia_data['abs_g_mag'] = abs_mag(gaia_data['phot_g_mean_mag'], gaia_data['parallax'])
 
-    mask = (gaia_data['abs_g_mag'] < 20) & (gaia_data['abs_g_mag'] > -20) # & (gaia_data['parallax_over_error'] > 0.1)
-    gaia_data = gaia_data[mask]
+    # mask = (gaia_data['abs_g_mag'] < 20) & (gaia_data['abs_g_mag'] > -20) # & (gaia_data['parallax_over_error'] > 0.1)
+    # gaia_data = gaia_data[mask]
 
-    filtered_n = len(gaia_data)
-    print(f'Stars kept after filtering: {filtered_n / initial_n:.2%}')
+    # filtered_n = len(gaia_data)
+    # print(f'Stars kept after filtering: {filtered_n / initial_n:.2%}')
 
     gaia_data['single_flux_frac_error'] = single_flux_frac_error(gaia_data['phot_g_mean_mag'])
 
@@ -335,10 +336,10 @@ def gaia_analysis_v2():
 
     print(f'Detectable fraction: {frac:.2%}')
 
-    plt.hist(np.log10(L_I_min_3_sigma), bins=500, density=True, cumulative=True, range=(-4, 3), log=True,
-             histtype='step', label='3-sigma detection')
-    plt.hist(np.log10(L_I_min_5_sigma), bins=500, density=True, cumulative=True, range=(-4, 3), log=True,
-             histtype='step', label='5-sigma detection')
+    n, bins, patches = plt.hist(np.log10(L_I_min_3_sigma), bins=500, density=True, cumulative=True, range=(-4, 3),
+                                log=True, histtype='step', label='3-sigma detection')
+    plt.hist(np.log10(L_I_min_5_sigma), bins=500, density=True, cumulative=True, range=(-4, 3),
+             log=True, histtype='step', label='5-sigma detection')
     plt.legend(loc='lower right')
     plt.xlabel('Minimum observable impact luminosity ($L_{\odot}$)')
     plt.ylabel('Fraction of stars')
@@ -383,10 +384,19 @@ def gaia_analysis_v2():
     plt.savefig('figures/detectability_HR_v2.pdf', bbox_inches='tight')
     plt.close()
 
+    observability_probability = lambda L: np.interp(np.log10(L), bins[:-1], n)
+
+    return good_stars, observability_probability
+
 
 def simulated_light_curve(gaia_entry):
 
-    gaia_entry = gaia_entry[gaia_entry['phot_g_mean_mag'] > 18.5]
+    # plt.hist(gaia_entry['phot_g_mean_mag'])
+    # plt.show()
+    # plt.hist(gaia_entry['abs_g_mag'])
+    # plt.show()
+
+    gaia_entry = gaia_entry[gaia_entry['abs_g_mag'] < 7]
     #gaia_entry = gaia_entry[gaia_entry['teff_gspphot'] > 4500]
 
     m_g = np.array(gaia_entry['phot_g_mean_mag'])[0]
@@ -406,64 +416,65 @@ def simulated_light_curve(gaia_entry):
     print(f'L = {L:.2e} L_sun')
     print(f'T = {T_eff} K')
     print(f'log_g = {log_g}')
-    print(f'd = {1/parallax}')
+    print(f'd = {1/parallax} pc')
+
+    filename = get_filename(2, 4)
+    snap = snapshot(filename)
+
+    phot = photosphere(snap, 12 * Rearth, resolution=800, period=20*24*3600, n_theta=20)
+    phot.set_up()
+    time, lum, A, R, T, m_dot, t2, t10 = phot.long_term_evolution()
+    lum, time = lum / L_sun, time / yr
+    time, lum = np.concatenate([[-0.0001], time]), np.concatenate([[0], lum])
+    light_curve_1 = interp1d(time, lum, bounds_error=False, fill_value=0)
 
     filename = get_filename(0, 4)
     snap = snapshot(filename)
 
-    phot = photosphere(snap, 12 * Rearth, 60 * Rearth, 800, n_theta=20)
+    phot = photosphere(snap, 12 * Rearth, resolution=800, period=20*24*3600, n_theta=20)
     phot.set_up()
-    L0 = phot.luminosity / L_sun
     time, lum, A, R, T, m_dot, t2, t10 = phot.long_term_evolution()
-
-    lum = lum / L_sun
-    time = time / yr
-
-    time = np.concatenate([[-0.0001], time])
-    lum = np.concatenate([[0], lum])
-
+    lum, time = lum / L_sun, time / yr
+    time, lum = np.concatenate([[-0.0001], time]), np.concatenate([[0], lum])
     light_curve_2 = interp1d(time, lum, bounds_error=False, fill_value=0)
 
-    filename = get_filename(15, 4)
+    filename = get_filename(7, 4)
     snap = snapshot(filename)
 
-    phot = photosphere(snap, 12 * Rearth, 60 * Rearth, 800, n_theta=20)
+    phot = photosphere(snap, 12 * Rearth, resolution=800, period=20*24*3600, n_theta=20)
     phot.set_up()
-    L0 = phot.luminosity / L_sun
     time, lum, A, R, T, m_dot, t2, t10 = phot.long_term_evolution()
-
-    lum = lum / L_sun
-    time = time / yr
-
-    time = np.concatenate([[-0.0001], time])
-    lum = np.concatenate([[0], lum])
-
+    lum, time = lum / L_sun, time / yr
+    time, lum = np.concatenate([[-0.0001], time]), np.concatenate([[0], lum])
     light_curve_3 = interp1d(time, lum, bounds_error=False, fill_value=0)
 
     t_sample = (np.arange(-15, 70) * (30/365)) + (15/365)
     t_continuous = np.linspace(-1, 5, num=3000)
 
+    L_1 = L + light_curve_1(t_sample)
     L_2 = L + light_curve_2(t_sample)
     L_3 = L + light_curve_3(t_sample)
 
+    L_1_model = L + light_curve_1(t_continuous)
     L_2_model = L + light_curve_2(t_continuous)
     L_3_model = L + light_curve_3(t_continuous)
 
     L_base = np.full_like(t_sample, L)
 
     frac_error = np.array(gaia_entry['single_flux_frac_error'])[0]
+    mag_error = 2.5 * np.log10(1 + frac_error)
 
-    print(f'Impact luminosity: {L0:.2e} L_sun')
-    print(f'Fractional error: {frac_error:.1e}')
-
+    L_1 = np.random.normal(L_1, L_1 * frac_error)
     L_2 = np.random.normal(L_2, L_2 * frac_error)
     L_3 = np.random.normal(L_3, L_3 * frac_error)
     L_base = np.random.normal(L_base, L_base * frac_error)
 
+    m_g_1 = M_bol_sun - 2.5 * np.log10(L_1) - bcf - 5 * (np.log10(parallax) + 1)
     m_g_2 = M_bol_sun - 2.5 * np.log10(L_2) - bcf - 5 * (np.log10(parallax) + 1)
     m_g_3 = M_bol_sun - 2.5 * np.log10(L_3) - bcf - 5 * (np.log10(parallax) + 1)
     m_g_base = M_bol_sun - 2.5 * np.log10(L_base) - bcf - 5 * (np.log10(parallax) + 1)
 
+    m_g_1_model = M_bol_sun - 2.5 * np.log10(L_1_model) - bcf - 5 * (np.log10(parallax) + 1)
     m_g_2_model = M_bol_sun - 2.5 * np.log10(L_2_model) - bcf - 5 * (np.log10(parallax) + 1)
     m_g_3_model = M_bol_sun - 2.5 * np.log10(L_3_model) - bcf - 5 * (np.log10(parallax) + 1)
 
@@ -474,50 +485,110 @@ def simulated_light_curve(gaia_entry):
 
     xlim = [-0.5, 3]
 
-    axs[0].scatter(t_sample, m_g_2, color='blue', s=10)
-    axs[0].errorbar(t_sample, m_g_2, yerr=frac_error, fmt='none', color='blue')
-    axs[0].plot(t_continuous, m_g_2_model, 'b--')
-    #axs[0].set_ylim([m_g - 0.12, m_g + 0.01])
+    axs[0].scatter(t_sample, m_g_1, color='blue', s=10)
+    axs[0].errorbar(t_sample, m_g_1, yerr=mag_error, fmt='none', color='blue')
     axs[0].invert_yaxis()
     axs[0].set_xlim(xlim)
     axs[0].axhline(m_g, 0, 1, color='black', linestyle='--')
 
-    axs[1].scatter(t_sample, m_g_3, color='blue', s=10)
-    axs[1].errorbar(t_sample, m_g_3, yerr=frac_error, fmt='none', color='blue')
-    axs[1].plot(t_continuous, m_g_3_model, 'b--')
-    #axs[1].set_ylim([m_g - 0.12, m_g + 0.01])
+    axs[1].scatter(t_sample, m_g_2, color='blue', s=10)
+    axs[1].errorbar(t_sample, m_g_2, yerr=mag_error, fmt='none', color='blue')
     axs[1].invert_yaxis()
     axs[1].set_ylabel('Apparent magnitude (Gaia G-band)')
     axs[1].set_xlim(xlim)
     axs[1].axhline(m_g, 0, 1, color='black', linestyle='--')
 
-    axs[2].scatter(t_sample, m_g_base, color='blue', s=0.5)
-    axs[2].errorbar(t_sample, m_g_base, yerr=frac_error, fmt='none', color='blue')
-    #axs[2].set_ylim([m_g - 0.12, m_g + 0.01])
+    axs[2].scatter(t_sample, m_g_3, color='blue', s=10)
+    axs[2].errorbar(t_sample, m_g_3, yerr=mag_error, fmt='none', color='blue')
     axs[2].invert_yaxis()
-    axs[2].set_xlabel('Time (yr)')
     axs[2].set_xlim(xlim)
     axs[2].axhline(m_g, 0, 1, color='black', linestyle='--')
+
+    # axs[2].scatter(t_sample, m_g_base, color='blue', s=0.5)
+    # axs[2].errorbar(t_sample, m_g_base, yerr=frac_error, fmt='none', color='blue')
+    # axs[2].invert_yaxis()
+    # axs[2].set_xlim(xlim)
+    # axs[2].axhline(m_g, 0, 1, color='black', linestyle='--')
+
+    axs[2].set_xlabel('Time (yr)')
+
+    plt.savefig('figures/gaia_light_curve_no_lines.png', bbox_inches='tight')
+    plt.savefig('figures/gaia_light_curve_no_lines.pdf', bbox_inches='tight')
+
+    axs[0].plot(t_continuous, m_g_1_model, 'b--')
+    axs[1].plot(t_continuous, m_g_2_model, 'b--')
+    axs[2].plot(t_continuous, m_g_3_model, 'b--')
 
     plt.savefig('figures/gaia_light_curve.png', bbox_inches='tight')
     plt.savefig('figures/gaia_light_curve.pdf', bbox_inches='tight')
 
-    fig.set_figwidth(8)
-    fig.set_figheight(5)
 
-    axs[0].set_xlim([-0.5, 3])
-    axs[1].set_xlim([-0.5, 3])
-    axs[1].set_xlabel('Time (yr)')
-    # axs[2].set_xlim([-0.5, 3])
+def monte_carlo_analysis(n_stars, t_obs, observability_probability):
 
-    plt.savefig('figures/gaia_light_curve_small.png', bbox_inches='tight')
-    plt.savefig('figures/gaia_light_curve_small.pdf', bbox_inches='tight')
+    n_stars = int(n_stars)
+
+    # 1. reduce sample to stars young enough for impacts to happen
+
+    # max_impact_time = np.random.triangular(50e6, 100e6, 300e6, size=n_stars)
+    # prob_of_young = (np.random.uniform(0, 10e9, size=n) < np.random.triangular(90e6, 100e6, 400e6, size=n)).sum() / n
+    # n_stars_young = int(n_stars * prob_of_young)
+
+    max_impact_time = 100e6
+    star_age = np.linspace(0, 10e9, num=n_stars)
+    n_stars_young = (star_age < max_impact_time).sum()
+
+    # 2. reduce sample to stars where an impact happens in the observing period
+
+    #max_impact_time = np.random.triangular(50e6, 100e6, 400e6)
+    n_planets = np.floor(np.random.triangular(0, 3, 8, size=n_stars_young))
+    n_impacts = np.random.poisson(3, size=n_stars_young)
+    impact_rate = (n_planets * n_impacts) / max_impact_time
+
+    impacts_in_sample = np.random.poisson(impact_rate * t_obs, size=n_stars_young)
+    n_impacts = impacts_in_sample.sum()
+
+    # 3. reduce sample to stars where the impact is observable
+
+    L_impact = np.random.triangular(1e-4, 5e-3, 2e-2, size=n_impacts)
+    prob_of_visibility = np.interp(np.log10(L_impact),
+                                   np.array([-4, -3.5, -3, -2.5, -1.5]),
+                                   np.array([0, 0.015, 0.05, 0.16, 0.3]))
+    prob_of_visibility = observability_probability(L_impact)
+
+    r = np.random.random(n_impacts)
+
+    n_visible = (r < prob_of_visibility).sum()
+
+    return n_visible
+
+
+def full_monte_carlo_analysis(n, observability_probability):
+
+    impact_count = np.zeros(n)
+    for i in tqdm(range(n)):
+        impact_count[i] = monte_carlo_analysis(1.8e9, 5, observability_probability)
+    plt.hist(impact_count, bins=np.arange(0, 10), align='left', density=True, histtype='step',
+             label='5 year observation period')
+
+    impact_count = np.zeros(n)
+    for i in tqdm(range(n)):
+        impact_count[i] = monte_carlo_analysis(1.8e9, 10, observability_probability)
+    plt.hist(impact_count, bins=np.arange(0, 10), align='left', density=True, histtype='step',
+             label='10 year observation period')
+
+    plt.xlabel('Number of observable impacts')
+    plt.ylabel('Proportion of runs')
+    plt.legend()
+
+    plt.savefig('figures/monte_carlo.png', bbox_inches='tight')
+    plt.savefig('figures/monte_carlo.pdf', bbox_inches='tight')
+    plt.close()
 
 
 if __name__ == '__main__':
     # gaia_mean_flux_error_plot()
-    # stars = gaia_analysis()
-    # simulated_light_curve(stars)
-    gaia_analysis_v2()
+    stars, obs_prob = gaia_analysis_v2()
+    simulated_light_curve(stars)
+    # full_monte_carlo_analysis(300, obs_prob)
 
 

@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.interpolate import interp1d, RegularGridInterpolator
 from scipy.integrate import odeint
-from scipy.special import exp1
 from swiftsimio.visualisation.rotation import rotation_matrix_from_vector
 from swiftsimio.visualisation.slice import slice_gas
 from unyt import Rearth, m
@@ -14,7 +13,7 @@ from multiprocessing import Pool, cpu_count
 import sys
 import uuid
 
-from snapshot_analysis import snapshot, data_labels
+from snapshot_analysis import data_labels
 import EOS as fst
 
 cpus = cpu_count()
@@ -230,7 +229,7 @@ class photosphere:
         R.convert_to_units(Rearth)
         z.convert_to_units(Rearth)
 
-        plt.figure(figsize=(10, 8))
+        plt.figure(figsize=(8, 6), dpi=300)
         # if val_max is not None:
         #     plt.contourf(R, z, vals, 200, cmap=cmap, vmax=val_max)
         # else:
@@ -250,7 +249,7 @@ class photosphere:
             plt.ylim(ylim)
         
         if plot_photosphere:
-            plt.plot(self.R_phot / R_earth, self.z_phot / R_earth, 'r--', label='Photic surface')
+            plt.plot(self.R_phot / R_earth, self.z_phot / R_earth, 'r--', label='Surface of photosphere')
         theta = np.linspace(0, np.pi)
         plt.plot((self.R_min / R_earth) * np.sin(theta), (self.z_min / R_earth) * np.cos(theta), 'w--', label='Extrapolation point')
 
@@ -493,7 +492,7 @@ class photosphere:
         V = self.data['V']
         L = V / A
 
-        emissivity = np.minimum(1 - np.exp(-alpha * L), 1)
+        emissivity = 1 - np.exp(-alpha * L)
         t_cool = (rho * u1 * L) / (sigma * (T1 ** 4) * emissivity)
 
         t_cool = np.flip(np.cumsum(np.flip(t_cool, axis=1), axis=1), axis=1)

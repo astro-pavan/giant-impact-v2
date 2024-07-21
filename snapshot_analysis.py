@@ -345,12 +345,14 @@ class snapshot:
             #plt.scatter(self.R_xy[plot_mask], self.data.gas.angular_velocity[plot_mask], s=0.2, c='blue', marker='o')
             x = np.log10(np.abs(self.R_xy[plot_mask]))
             y = np.log10(np.abs(self.data.gas.angular_velocity[plot_mask]))
+
+            plt.figure(dpi=300)
             plt.hist2d(x, y, bins=100, cmap='Blues', norm=SymLogNorm(1))
 
             plt.plot(np.log10(x2), np.log10(best_fit_mks(x2)), linestyle='--', color='red', label='Best fit rotation curve')
             plt.plot(np.log10(x2), np.log10(omega_keplerian(x2)), linestyle='--', color='black', label='Keplerian rotation curve')
             plt.plot(np.log10(x1), np.log10(np.full_like(x1, 10 ** a0)), 'r--')
-            plt.xlabel('$\log_{10}$[Cyl. Radius ($R_{\oplus}$)]')
+            plt.xlabel('$\log_{10}$[Cyl. Radius (m)]')
             plt.ylabel('$\log_{10}$[Angular velocity (rad/s)]')
             # plt.axvspan(10, 100, alpha=0.5, color='grey')
             # plt.xlim([1e-1, 1e2])
@@ -468,6 +470,7 @@ class gas_slice:
 
         if ax is None:
             fig, ax = plt.subplots()
+            fig.set_dpi(300)
         x_tick_pos, x_tick_label, y_tick_pos, y_tick_label = self.ticks()
 
         if threshold is not None:

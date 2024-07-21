@@ -27,8 +27,6 @@ day = 3600 * 24
 yr = 365.25 * day
 silicate_latent_heat_v = 3e7
 photosphere_depth = 2/3
-pressure_shell = 1e11
-outer_shell_depth = 1e-7
 pi = np.pi
 cos = lambda theta: np.cos(theta)
 sin = lambda theta: np.sin(theta)
@@ -55,13 +53,14 @@ class photosphere:
 
     # sample size and max size both have units
     def __init__(self, snapshot, sample_size=12*Rearth, max_size=50*Rearth, period=None,
-                 resolution=500, n_theta=100, n_phi=10, droplet_infall=True):
+                 resolution=500, n_theta=100, n_phi=10, droplet_infall=True, pressure_limit=1e11):
 
         sample_size.convert_to_units(Rearth)
         max_size.convert_to_units(Rearth)
         self.snapshot = snapshot
         self.data = {}
         self.droplet_infall = droplet_infall
+        self.pressure_shell = pressure_limit
 
         self.j_phot = np.zeros(n_theta+1)
         self.luminosity = 0
@@ -524,7 +523,7 @@ class photosphere:
     def cool_step(self, dt):
 
         photosphere_mask = self.data['tau'] > photosphere_depth
-        pressure_mask = self.data['P'] < pressure_shell
+        pressure_mask = self.data['P'] < self.pressure_shell
         energy_mask = photosphere_mask & pressure_mask
 
         u1 = self.data['u']
@@ -583,7 +582,7 @@ class photosphere:
 
             i += 1
 
-            E_in = np.sum(self.data['E'][(self.data['tau'] > photosphere_depth) & (self.data['P'] < pressure_shell)])
+            E_in = np.sum(self.data['E'][(self.data['tau'] > photosphere_depth) & (self.data['P'] < self.pressure_shell)])
             t_cool_estimated = E_in / self.luminosity
 
             dt = (t_cool_estimated / 50) if t_current > 1 * yr else min_timestep * yr

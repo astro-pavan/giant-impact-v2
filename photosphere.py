@@ -637,12 +637,14 @@ class photosphere:
         return t, L, A, R, T, m_dot, t_half, t_tenth
 
     # performs the initial cooling, removes droplets and calculates the photosphere
-    def set_up(self):
+    def set_up(self, extra_cool=None):
 
         self.initial_cool(1e5)
         self.nan_check()
         if self.droplet_infall:
             self.remove_droplets()
+        if extra_cool is not None:
+            self.cool_step(extra_cool)
 
         self.get_photosphere()
 

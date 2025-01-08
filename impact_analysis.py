@@ -3,8 +3,10 @@ import matplotlib.colors
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.cm import viridis
+from matplotlib.colors import Normalize
 from unyt import Rearth
 import re
+import pandas as pd
 
 from snapshot_analysis import snapshot, gas_slice, data_labels
 from photosphere import photosphere, M_earth, L_sun, yr
@@ -13,7 +15,7 @@ import EOS as fst
 day = 3600 * 24
 
 hill_radius = 60
-orbital_period = 20 * day
+orbital_period = 1 * day
 n_theta = 40
 n_phi = 20
 res = 1000
@@ -33,7 +35,7 @@ early_runs = [
     '/snapshots/advanced_spin/snapshot_0316.hdf5'
 ]
 
-snapshot_path = '/home/pavan/Masters Project/Final_Sims/'
+snapshot_path = '/home/pavan/MSci/Final_Sims/'
 
 directory = ['',
              'target mass/', 'target mass/', 'target mass/', 'target mass/', 'target mass/', 'target mass/', 'target mass/',
@@ -332,17 +334,19 @@ def example_extrapolation(i):
     curve = [R * np.cos(theta), R * np.sin(theta)]
     s.plot('rho', threshold=1e-6, save='density_floor', show=False, curve=curve, curve_label='Extrapolation point')
     phot = photosphere(snap, 12 * Rearth, resolution=1600, period=orbital_period, n_theta=100)
-    phot.set_up()
+    phot.set_up(extra_cool=1e6)
     phot.plot('P', plot_photosphere=True, save='P_extrapolation', val_min=100, val_max=1e10, ylim=[-19, 19],
               xlim=[0, 38], cmap='inferno')
     phot.plot('tau', plot_photosphere=True, save='tau_extrapolation', val_min=1e-6, val_max=1e12, ylim=[-19, 19],
               xlim=[0, 38], cmap='inferno')
     phot.plot('P', plot_photosphere=True, save='P_extrapolation_2', val_min=100, val_max=1e10, ylim=[-30, 30],
-              xlim=[0, 60], cmap='inferno')
+              xlim=[0, 100], cmap='inferno')
     phot.plot('tau', plot_photosphere=True, save='tau_extrapolation_2', val_min=1e-6, val_max=1e12, ylim=[-30, 30],
-              xlim=[0, 60], cmap='inferno')
+              xlim=[0, 100], cmap='inferno')
     phot.plot('T', plot_photosphere=True, save='T_extrapolation', log=False, val_min=2000, val_max=12000, ylim=[-25, 25],
-              xlim=[0, 50], cmap='plasma', round_to=1000)
+              xlim=[0, 100], cmap='plasma', round_to=1000)
+    phot.plot('rho', plot_photosphere=True, save='rho_extrapolation', log=True, val_min=1e-10, val_max=1e2,
+              ylim=[-25, 25], xlim=[0, 100], cmap='magma')
 
 
 # produces a phase diagram with the thermal profile of a post impact body
@@ -477,7 +481,7 @@ def full_plot():
         final_AM[i] = snap.total_angular_momentum
 
         phot = photosphere(snap, 12 * Rearth, resolution=res, period=orbital_period, n_theta=n_theta, n_phi=n_phi)
-        phot.set_up()
+        phot.set_up(extra_cool=144000)
         L0_b.append(phot.luminosity / L_sun)
         L0[i] = phot.luminosity / L_sun
 
@@ -523,89 +527,86 @@ def full_plot():
     total_mass = m_target + m_impactor
     mass_ratio = m_impactor / total_mass
 
-    def big_plot_v1():
-        fig, axs = plt.subplots(2, 2)
-        fig.set_figwidth(16)
-        fig.set_figheight(12)
-        plt.subplots_adjust(hspace=0, wspace=0)
-
-        axs[0, 0].scatter(total_mass[mass_indexes], L0_m, c='#E69F00', label='b = 0.5, $\gamma$ = 0.50')
-        axs[0, 0].scatter(total_mass[mass_impact_parameter_indexes], L0_mb, c='#56B4E9', label='b = 0.1, $\gamma$ = 0.50')
-        axs[0, 0].scatter(total_mass[mass_mass_ratio_indexes], L0_mr, c='#009E73', label='b = 0.5, $\gamma$ = 0.33')
-
-        axs[0, 0].plot()
-
-        axs[1, 0].scatter(total_mass[mass_indexes], t_cool_m / day, c='#E69F00', label='b = 0.5, $\gamma$ = 0.50')
-        axs[1, 0].scatter(total_mass[mass_impact_parameter_indexes], t_cool_mb / day, c='#56B4E9', label='b = 0.1, $\gamma$ = 0.50')
-        axs[1, 0].scatter(total_mass[mass_mass_ratio_indexes], t_cool_mr / day, c='#009E73', label='b = 0.5, $\gamma$ = 0.33')
-
-        axs[0, 1].scatter(impact_parameter[impact_parameter_indexes], L0_b, c='#CC79A7', label='$M_{\mathrm{total}}$ = 1.0 $M_{\oplus}$, $\gamma$ = 0.50')
-
-        axs[1, 1].scatter(impact_parameter[impact_parameter_indexes], t_cool_b / day, c='#CC79A7')
-
-        axs[0, 0].legend()
-        axs[0, 1].legend()
-
-        axs[0, 0].set_ylim([0, 0.04])
-        axs[0, 1].set_ylim([0, 0.04])
-        axs[1, 0].set_ylim([10, 450])
-        axs[1, 1].set_ylim([10, 450])
-
-        axs[1, 0].set_yscale('log')
-        axs[1, 1].set_yscale('log')
-
-        axs[0, 0].set_xlim([0, 4.4])
-        axs[1, 0].set_xlim([0, 4.4])
-        axs[0, 1].set_xlim([0, 0.65])
-        axs[1, 1].set_xlim([0, 0.65])
-
-        axs[0, 0].set_ylabel('Initial luminosity ($L_{\odot}$)')
-        axs[0, 1].set_yticklabels([])
-        axs[1, 0].set_ylabel('Cooling time (day)')
-        axs[1, 1].set_yticklabels([])
-
-        axs[1, 0].set_xlabel('Total mass ($M_{\oplus}$)')
-        axs[0, 0].set_xticklabels([])
-        axs[1, 1].set_xlabel('Impact parameter')
-        axs[0, 1].set_xticklabels([])
-
-        axs[0, 0].annotate(text='A', xy=(0.95, 0.05), xycoords='axes fraction')
-        axs[0, 1].annotate(text='B', xy=(0.95, 0.05), xycoords='axes fraction')
-        axs[1, 0].annotate(text='C', xy=(0.95, 0.05), xycoords='axes fraction')
-        axs[1, 1].annotate(text='D', xy=(0.95, 0.05), xycoords='axes fraction')
-
-        plt.savefig('figures/big_plot.png', bbox_inches='tight')
-        plt.savefig('figures/big_plot.pdf', bbox_inches='tight')
-        plt.close()
-
-    big_plot_v1()
+    # def big_plot_v1():
+    #     fig, axs = plt.subplots(2, 2)
+    #     fig.set_figwidth(16)
+    #     fig.set_figheight(12)
+    #     plt.subplots_adjust(hspace=0, wspace=0)
+    #
+    #     axs[0, 0].scatter(total_mass[mass_indexes], L0_m, c='#E69F00', label='b = 0.5, $\gamma$ = 0.50')
+    #     axs[0, 0].scatter(total_mass[mass_impact_parameter_indexes], L0_mb, c='#56B4E9', label='b = 0.1, $\gamma$ = 0.50')
+    #     axs[0, 0].scatter(total_mass[mass_mass_ratio_indexes], L0_mr, c='#009E73', label='b = 0.5, $\gamma$ = 0.33')
+    #
+    #     axs[0, 0].plot()
+    #
+    #     axs[1, 0].scatter(total_mass[mass_indexes], t_cool_m / day, c='#E69F00', label='b = 0.5, $\gamma$ = 0.50')
+    #     axs[1, 0].scatter(total_mass[mass_impact_parameter_indexes], t_cool_mb / day, c='#56B4E9', label='b = 0.1, $\gamma$ = 0.50')
+    #     axs[1, 0].scatter(total_mass[mass_mass_ratio_indexes], t_cool_mr / day, c='#009E73', label='b = 0.5, $\gamma$ = 0.33')
+    #
+    #     axs[0, 1].scatter(impact_parameter[impact_parameter_indexes], L0_b, c='#CC79A7', label='$M_{\mathrm{total}}$ = 1.0 $M_{\oplus}$, $\gamma$ = 0.50')
+    #
+    #     axs[1, 1].scatter(impact_parameter[impact_parameter_indexes], t_cool_b / day, c='#CC79A7')
+    #
+    #     axs[0, 0].legend()
+    #     axs[0, 1].legend()
+    #
+    #     axs[0, 0].set_ylim([0, 0.04])
+    #     axs[0, 1].set_ylim([0, 0.04])
+    #     axs[1, 0].set_ylim([10, 450])
+    #     axs[1, 1].set_ylim([10, 450])
+    #
+    #     axs[1, 0].set_yscale('log')
+    #     axs[1, 1].set_yscale('log')
+    #
+    #     axs[0, 0].set_xlim([0, 4.4])
+    #     axs[1, 0].set_xlim([0, 4.4])
+    #     axs[0, 1].set_xlim([0, 0.65])
+    #     axs[1, 1].set_xlim([0, 0.65])
+    #
+    #     axs[0, 0].set_ylabel('Initial luminosity ($L_{\odot}$)')
+    #     axs[0, 1].set_yticklabels([])
+    #     axs[1, 0].set_ylabel('Cooling time (day)')
+    #     axs[1, 1].set_yticklabels([])
+    #
+    #     axs[1, 0].set_xlabel('Total mass ($M_{\oplus}$)')
+    #     axs[0, 0].set_xticklabels([])
+    #     axs[1, 1].set_xlabel('Impact parameter')
+    #     axs[0, 1].set_xticklabels([])
+    #
+    #     axs[0, 0].annotate(text='A', xy=(0.95, 0.05), xycoords='axes fraction')
+    #     axs[0, 1].annotate(text='B', xy=(0.95, 0.05), xycoords='axes fraction')
+    #     axs[1, 0].annotate(text='C', xy=(0.95, 0.05), xycoords='axes fraction')
+    #     axs[1, 1].annotate(text='D', xy=(0.95, 0.05), xycoords='axes fraction')
+    #
+    #     plt.savefig('figures/big_plot.png', bbox_inches='tight')
+    #     plt.savefig('figures/big_plot.pdf', bbox_inches='tight')
+    #     plt.close()
+    #
+    # big_plot_v1()
+    #
+    # plt.figure(figsize=(8, 6), dpi=300)
+    #
+    # plt.scatter(total_mass[mass_indexes], L0_m, label='b = 0.5, $\gamma$ = 0.50')
+    # plt.scatter(total_mass[mass_impact_parameter_indexes], L0_mb, label='b = 0.1, $\gamma$ = 0.50')
+    # plt.scatter(total_mass[mass_mass_ratio_indexes], L0_mr, label='b = 0.5, $\gamma$ = 0.33')
+    #
+    # m = np.linspace(0, 4)
+    # L = 0.004 * (m ** (2/3))
+    # plt.plot(m, L, 'k--', label='$L \propto M^{2/3}$')
+    #
+    # plt.xlim([0, 4.1])
+    # plt.ylim([0, 0.035])
+    #
+    # plt.xlabel('Total mass ($M_{\oplus}$)')
+    # plt.ylabel('Initial luminosity ($L_{\odot}$)')
+    # plt.legend(loc='upper left')
+    #
+    # plt.savefig('figures/mass_plot.png', bbox_inches='tight')
+    # plt.savefig('figures/mass_plot.pdf', bbox_inches='tight')
+    # plt.close()
 
     plt.figure(figsize=(8, 6), dpi=300)
 
-    plt.scatter(total_mass[mass_indexes], L0_m, label='b = 0.5, $\gamma$ = 0.50')
-    plt.scatter(total_mass[mass_impact_parameter_indexes], L0_mb, label='b = 0.1, $\gamma$ = 0.50')
-    plt.scatter(total_mass[mass_mass_ratio_indexes], L0_mr, label='b = 0.5, $\gamma$ = 0.33')
-
-    m = np.linspace(0, 4)
-    L = 0.004 * (m ** (2/3))
-    plt.plot(m, L, 'k--', label='$L \propto M^{2/3}$')
-
-    plt.xlim([0, 4.1])
-    plt.ylim([0, 0.035])
-
-    plt.xlabel('Total mass ($M_{\oplus}$)')
-    plt.ylabel('Initial luminosity ($L_{\odot}$)')
-    plt.legend(loc='upper left')
-
-    plt.savefig('figures/mass_plot.png', bbox_inches='tight')
-    plt.savefig('figures/mass_plot.pdf', bbox_inches='tight')
-    plt.close()
-
-    plt.figure(figsize=(8, 6), dpi=300)
-    #plt.style.use('dark_background')
-
-    mass_ratio_mask = np.full_like(L0, False, dtype=bool)
-    mass_ratio_mask[mass_mass_ratio_indexes] = True
     scatter1 = plt.scatter(t_cool / day, L0, s=20,
                            c=total_mass, cmap='viridis', marker='o')
 
@@ -639,9 +640,126 @@ def full_plot():
         print(f'{t_cool[i] / day:.0f} \\\\')
 
 
+def full_plot_v2():
+
+    final_mass = np.zeros_like(m_target)
+    final_AM = np.zeros_like(m_target)
+
+    def do_all_with_period(period):
+
+        index, L0, t_cool, total_mass, total_AM = [], [], [], []
+
+        for i in mass_indexes:
+            filename = get_filename(i, 4)
+            snap = snapshot(filename)
+
+            phot = photosphere(snap, 12 * Rearth, resolution=res, period=period, n_theta=n_theta, n_phi=n_phi)
+            phot.set_up()
+
+            L0.append(phot.luminosity / L_sun)
+            total_mass.append(snap.total_mass)
+            total_AM.append(snap.total_angular_momentum)
+            index.append(i)
+
+            t, lum, A, R, T, m_dot, t2, t10 = phot.long_term_evolution()
+            t_cool.append(t2 / day)
+
+        for i in impact_parameter_indexes:
+            filename = get_filename(i, 4)
+            snap = snapshot(filename)
+
+            phot = photosphere(snap, 12 * Rearth, resolution=res, period=period, n_theta=n_theta, n_phi=n_phi)
+            phot.set_up()
+
+            L0.append(phot.luminosity / L_sun)
+            total_mass.append(snap.total_mass)
+            total_AM.append(snap.total_angular_momentum)
+            index.append(i)
+
+            t, lum, A, R, T, m_dot, t2, t10 = phot.long_term_evolution()
+            t_cool.append(t2 / day)
+
+        for i in mass_impact_parameter_indexes:
+            filename = get_filename(i, 4)
+            snap = snapshot(filename)
+
+            phot = photosphere(snap, 12 * Rearth, resolution=res, period=period, n_theta=n_theta, n_phi=n_phi)
+            phot.set_up()
+
+            L0.append(phot.luminosity / L_sun)
+            total_mass.append(snap.total_mass)
+            total_AM.append(snap.total_angular_momentum)
+            index.append(i)
+
+            t, lum, A, R, T, m_dot, t2, t10 = phot.long_term_evolution()
+            t_cool.append(t2 / day)
+
+        for i in mass_mass_ratio_indexes:
+            filename = get_filename(i, 4)
+            snap = snapshot(filename)
+
+            phot = photosphere(snap, 12 * Rearth, resolution=res, period=period, n_theta=n_theta, n_phi=n_phi)
+            phot.set_up()
+
+            L0.append(phot.luminosity / L_sun)
+            total_mass.append(snap.total_mass)
+            total_AM.append(snap.total_angular_momentum)
+            index.append(i)
+
+            t, lum, A, R, T, m_dot, t2, t10 = phot.long_term_evolution()
+            t_cool.append(t2 / day)
+
+        L0 = np.array(L0)
+        t_cool = np.array(t_cool)
+        total_mass = np.array(total_mass)
+
+        return index, L0, t_cool, total_mass, total_AM
+
+    i_1, L0_1, t_cool_1, m_1, AM_1 = do_all_with_period(1 * day)
+    df_1 = pd.DataFrame({'i': i_1, 'L': L0_1, 't': t_cool_1, 'm': m_1, 'AM': AM_1})
+    df_1.to_csv('res_tables/period1.csv')
+
+    i_10, L0_10, t_cool_10, m_10, AM_10 = do_all_with_period(10 * day)
+    df_10 = pd.DataFrame({'i': i_10, 'L': L0_10, 't': t_cool_10, 'm': m_10, 'AM': AM_10})
+    df_10.to_csv('res_tables/period10.csv')
+
+    i_100, L0_100, t_cool_100, m_100, AM_100 = do_all_with_period(100 * day)
+    df_100 = pd.DataFrame({'i': i_100, 'L': L0_100, 't': t_cool_100, 'm': m_100, 'AM': AM_100})
+    df_100.to_csv('res_tables/period100.csv')
+
+    # all_colors = np.concatenate([m_1, m_10, m_100])
+    all_t = np.concatenate([t_cool_1, t_cool_10, t_cool_100])
+    norm = Normalize(vmin=0, vmax=4)
+
+    plt.figure(figsize=(8, 6), dpi=300)
+
+    scatter1 = plt.scatter(t_cool_1, L0_1, s=20,
+                           c=m_1, cmap='viridis', norm=norm, marker='o', label='Period = 1 day')
+    scatter10 = plt.scatter(t_cool_10, L0_10, s=20,
+                            c=m_10, cmap='viridis', norm=norm, marker='x', label='Period = 10 days')
+    scatter100 = plt.scatter(t_cool_100, L0_100, s=20,
+                             c=m_100, cmap='viridis', norm=norm, marker='+', label='Period = 100 days')
+
+    plt.colorbar(scatter1, label='Total impact mass ($M_{\oplus}$)')
+    plt.clim(0, 4.0)
+    plt.legend()
+
+    plt.xlim([0, (np.max(all_t) / day) + 50])
+
+    plt.xlabel('Cooling time (day)')
+    plt.ylabel('Initial luminosity ($L_{\odot}$)')
+
+    plt.yscale('log')
+
+    plt.savefig('figures/big_plot_v2.png', bbox_inches='tight')
+    plt.savefig('figures/big_plot_v2.pdf', bbox_inches='tight')
+    plt.close()
+
+
 def test_hill_sphere():
 
-    periods = [1, 2, 5, 10, 20, 50, 100]
+    periods = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000]
+    # periods = [1, 10, 100]
 
     fig, ax = plt.subplots(2, 1, sharex=True)
     plt.subplots_adjust(hspace=0)
@@ -650,6 +768,9 @@ def test_hill_sphere():
 
     impact_indexes = [2, 0, 5, 7]
     impact_labels = ['0.5', '1.0', '2.0', '4.0']
+
+    impact_indexes = [0]
+    impact_labels = ['1.0']
 
     for i in range(len(impact_indexes)):
 
@@ -661,9 +782,9 @@ def test_hill_sphere():
             filename = get_filename(impact_indexes[i], 4)
             snap = snapshot(filename)
 
-            phot = photosphere(snap, 12 * Rearth, resolution=res, period=T*day, n_theta=n_theta, n_phi=n_phi)
+            phot = photosphere(snap, 12 * Rearth, resolution=100, period=T*day, n_theta=20, n_phi=n_phi)
 
-            phot.set_up()
+            phot.set_up(extra_cool=1.44e5)
 
             L0.append(phot.luminosity / L_sun)
 
@@ -767,7 +888,7 @@ def test_pressure_shell():
     for i in range(len(impact_indexes)):
 
         L0 = []
-        t_cool= []
+        t_cool = []
 
         for P in pressures:
 
@@ -808,13 +929,13 @@ def test_pressure_shell():
 
 if __name__ == '__main__':
 
-    example_extrapolation(5)
+    # example_extrapolation(5)
 
     # generate_table()
     # phase_diagram(get_filename(0, 4))
     # impact_plots()
     # light_curves(mass_indexes)
-    # full_plot()
+    full_plot_v2()
     # test_hill_sphere()
     # test_pressure_shell()
     # test_droplets()

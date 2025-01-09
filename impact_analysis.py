@@ -647,7 +647,7 @@ def full_plot_v2():
 
     def do_all_with_period(period):
 
-        index, L0, t_cool, total_mass, total_AM = [], [], [], []
+        index, L0, t_cool, total_mass, total_AM = [], [], [], [], []
 
         for i in mass_indexes:
             filename = get_filename(i, 4)
@@ -750,6 +750,34 @@ def full_plot_v2():
     plt.ylabel('Initial luminosity ($L_{\odot}$)')
 
     plt.yscale('log')
+
+    plt.savefig('figures/big_plot_v2.png', bbox_inches='tight')
+    plt.savefig('figures/big_plot_v2.pdf', bbox_inches='tight')
+    plt.close()
+
+
+def load_to_make_plot():
+
+    df_1 = pd.read_csv('res_tables/period1.csv')
+    df_10 = pd.read_csv('res_tables/period10.csv')
+    df_100 = pd.read_csv('res_tables/period100.csv')
+
+    norm = Normalize(vmin=0, vmax=4)
+
+    plt.figure(figsize=(13, 9))
+
+    plt.scatter(df_1['t'], df_1['L'], marker='x', c=df_1['m'] / 5.97e24, norm=norm, label='Period = 1 day')
+    plt.scatter(df_10['t'], df_10['L'], marker='*', c=df_10['m'] / 5.97e24, norm=norm, label='Period = 10 days')
+    plt.scatter(df_100['t'], df_100['L'], marker='o', c=df_100['m'] / 5.97e24, norm=norm, label='Period = 100 days')
+
+    plt.colorbar(label='Total impact mass ($M_{\oplus}$)')
+    plt.legend()
+
+    plt.xscale('log')
+    plt.yscale('log')
+
+    plt.xlabel('Cooling time (day)')
+    plt.ylabel('Initial luminosity ($L_{\odot}$)')
 
     plt.savefig('figures/big_plot_v2.png', bbox_inches='tight')
     plt.savefig('figures/big_plot_v2.pdf', bbox_inches='tight')
@@ -935,7 +963,8 @@ if __name__ == '__main__':
     # phase_diagram(get_filename(0, 4))
     # impact_plots()
     # light_curves(mass_indexes)
-    full_plot_v2()
+    # full_plot_v2()
+    load_to_make_plot()
     # test_hill_sphere()
     # test_pressure_shell()
     # test_droplets()

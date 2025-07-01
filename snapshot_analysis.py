@@ -89,15 +89,14 @@ class snapshot:
         self.total_mass.convert_to_mks()
         self.total_mass = self.total_mass.value
 
-
         self.total_angular_momentum = 0
         self.total_specific_angular_momentum = 0
 
         # calculates the coordinates of the particles relative to the CoM
-        pos = np.array(self.data.gas.coordinates - self.center_of_mass)
-        self.R_xy = np.hypot(pos[:, 0], pos[:, 1]) * Rearth
-        self.z = pos[:, 2] * Rearth
-        self.r = np.hypot(np.hypot(pos[:, 0], pos[:, 1]), pos[:, 2]) * Rearth
+        self.pos = np.array(self.data.gas.coordinates - self.center_of_mass)
+        self.R_xy = np.hypot(self.pos[:, 0], self.pos[:, 1]) * Rearth
+        self.z = self.pos[:, 2] * Rearth
+        self.r = np.hypot(np.hypot(self.pos[:, 0], self.pos[:, 1]), self.pos[:, 2]) * Rearth
 
         self.calculate_EOS()
         self.calculate_velocities()
@@ -172,41 +171,6 @@ class snapshot:
         result.convert_to_units(M_earth)
         return result
 
-    # calculates the EOS for all particles    def calculate_EOS(self):
-        print('Applying EOS to particles...')
-
-        gas = self.data.gas
-        woma.load_eos_tables()
-        gas.internal_energies.convert_to_mks()
-        gas.densities.convert_to_mks()
-
-        u, rho, mat_id = np.array(gas.internal_energies), np.array(gas.densities), np.array(gas.material_ids)
-
-        try:
-            T = woma.A1_T_u_rho(u, rho, mat_id)
-            P = woma.A1_P_u_rho(u, rho, mat_id)
-            S = woma.A1_s_u_rho(u, rho, mat_id)
-        except ValueError:
-            gas.material_ids_mass_weighted = gas.material_ids * gas.masses
-            return
-
-        gas.temperatures = sw.objects.cosmo_array(T * K)
-        gas.pressures = sw.objects.cosmo_array(P * Pa)
-        gas.entropy = sw.objects.cosmo_array(S * ((J / K) / kg))
-
-        gas.temperatures.cosmo_factor = gas.internal_energies.cosmo_factor
-        gas.pressures.cosmo_factor = gas.internal_energies.cosmo_factor
-        gas.entropy.cosmo_factor = gas.internal_energies.cosmo_factor
-
-        gas.temperatures_mass_weighted = gas.temperatures * gas.masses
-        gas.pressures_mass_weighted = gas.pressures * gas.masses
-        gas.entropy_mass_weighted = gas.entropy * gas.masses
-        gas.internal_energies_mass_weighted = gas.internal_energies * gas.masses
-
-        gas.material_ids_mass_weighted = gas.material_ids * gas.masses
-
-        print('EOS calculated')
-
     # calculates the vertical, radial and angular velocities of the particles as well as the angular momentum
     def calculate_velocities(self):
         gas = self.data.gas
@@ -219,7 +183,6 @@ class snapshot:
         masses = gas.masses
         r, v = np.array(gas.coordinates - self.center_of_mass), np.array(gas.velocities)
 
-        # h = np.cross(r, v)[:, 2] * ((m ** 2)/s)
         h = (r[:, 0] * v[:, 1] - r[:, 1] * v[:, 0]) * ((m ** 2)/s)
         omega = h / (self.R_xy ** 2)
 
@@ -255,45 +218,64 @@ class snapshot:
 
         self.center_of_mass.convert_to_units(Rearth)
 
-    # find the regions in the snapshot where the particle density is sufficient to analyse
+    # find the regions in the snapshot where the particle density is sufficient for analysis
     def particle_density_analysis(self):
 
-        # sets up the particle distribution histogram as a function of radius
-        R_bins = np.logspace(-2, 2, num=50)
-        R_hist = np.histogram(self.R_xy, R_bins)
+        R_max = 50
+        n_bins = 500
 
-        # R_hist_x is the outer radius of the bin, R_hist_y is the particle area density in the bin
-        R_hist_x, R_hist_y = np.zeros_like(R_hist[0], dtype=float), np.array(R_hist[0], dtype=float)
+        Rz_hist, Rz_edges = np.histogramdd(np.array([self.R_xy, np.abs(self.z)]).T, range=[[0, R_max], [0, R_max]], bins=[n_bins, n_bins])
 
-        # calculates the particle area density for each bin
-        for i in range(len(R_hist[0])):
-            R_in, R_out = R_hist[1][i], R_hist[1][i + 1]
-            area = np.pi * (R_out ** 2 - R_in ** 2)
-            R_hist_y[i], R_hist_x[i] = R_hist_y[i] / area, R_out
+        dR = R_max / n_bins
+        dz = dR
+        R_bins = Rz_edges[0][:-1] + dR / 2
+        z_bins = Rz_edges[1][:-1] + dz / 2
 
-        # finds the radius at which the particle density drops below a certain density (in particles per Rearth ** 2)
-        critical_density = 3
-        R_HD_region_mask = R_hist_y > critical_density
-        R_HD_limit = R_bins[np.argmin(R_HD_region_mask) - 1]
+        R_bins_2d, _ = np.meshgrid(R_bins, z_bins, indexing='ij')  # create a meshgrid for the bins
+        V_bins = 2 * np.pi * R_bins_2d * dR * dz # calculate the volume of each bin
 
-        # sets up the histogram as a function of height
-        n_z = 100
-        z_bins = np.array((self.box_size[2] / n_z) * np.arange(-n_z, n_z + 1))
-        z_hist = np.histogram(self.z.value, z_bins)
-        z_area = np.array(self.box_size[0] * (self.box_size[2] / n_z))
+        Rz_density = Rz_hist / V_bins # calculate the density in each bin
 
-        # populates the histogram array
-        z_hist_x, z_hist_y = np.array(z_hist[1][:-1], dtype=float), np.array(z_hist[0] / z_area, dtype=float)
+        vertical = Rz_density[0, :]  # get the vertical density
+        midplane = Rz_density[:, 0] # get the midplane density
 
-        # finds the heights at which the particle density drops below a certain density (in particles per Rearth ** 2)
-        z_HD_mask_min = (z_hist_y > critical_density) & (z_hist_x < 0)
-        z_HD_mask_max = (z_hist_y < critical_density) & (z_hist_x > 0)
-        z_HD_min, z_HD_max = z_bins[np.argmax(z_HD_mask_min)], z_bins[np.argmax(z_HD_mask_max)]
+        critical_density = 1000  # set the critical density for analysis
 
-        # gets the average of the heights
-        z_HD_limit = (np.abs(z_HD_min) + np.abs(z_HD_max)) / 2
+        # Find the R_bin where midplane goes below critical_density for the first time
+        HD_limit_R = R_bins[np.argmax(midplane < critical_density)] if np.any(midplane < critical_density) else R_bins[-1]
+        # Find the z_bin where vertical goes below critical_density for the first time
+        HD_limit_z = z_bins[np.argmax(vertical < critical_density)] if np.any(vertical < critical_density) else z_bins[-1]
 
-        return R_HD_limit * Rearth, z_HD_limit * Rearth
+        print(HD_limit_R)
+        print(HD_limit_z)   
+
+        # plt.plot(R_bins, midplane, label='Midplane Density')
+        # plt.xlabel('Cylindrical Radius ($R_{\\oplus}$)')
+        # plt.ylabel('Density (particles per $R_{\\oplus}^{3}$)')
+        # plt.yscale('log')
+        # plt.savefig('midplane_density.png', bbox_inches='tight')
+        # plt.close()
+
+        # plt.plot(z_bins, vertical, label='Vertical Density')
+        # plt.xlabel('Height ($R_{\\oplus}$)')
+        # plt.ylabel('Density (particles per $R_{\\oplus}^{3}$)')
+        # plt.yscale('log')
+        # plt.savefig('vertical_density.png', bbox_inches='tight')
+        # plt.close() 
+
+        # plt.contourf(R_bins, z_bins, Rz_density.T, levels=100, cmap='viridis')
+        # plt.colorbar(label='Particle Density (particles per $R_{\\oplus}^{3}$)')
+        # plt.contour(R_bins, z_bins, Rz_density.T, [100], colors='red', linewidths=0.5)
+        # plt.xlabel('Cylindrical Radius ($R_{\\oplus}$)')
+        # plt.ylabel('Height ($R_{\\oplus}$)')
+        
+        # plt.xlim([0, 10])
+        # plt.ylim([0, 10])
+
+        # plt.savefig('particle_density.png', bbox_inches='tight')
+        # plt.close()
+
+        return HD_limit_R * Rearth, HD_limit_z * Rearth
 
     # analyses the rotation of the particles to produce a best fit rotation curve
     def rotational_analysis(self, plot_output=False):
@@ -549,3 +531,8 @@ class gas_slice:
             plt.show()
 
         plt.close()
+
+
+if __name__ == "__main__":
+
+    snap = snapshot('snapshot_0240.hdf5')

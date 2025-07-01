@@ -2,3 +2,5 @@
 *.pdf
 *.png
 figures
+*.hdf5
+*.txt

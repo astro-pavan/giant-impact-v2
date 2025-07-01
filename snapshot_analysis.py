@@ -246,34 +246,8 @@ class snapshot:
         # Find the z_bin where vertical goes below critical_density for the first time
         HD_limit_z = z_bins[np.argmax(vertical < critical_density)] if np.any(vertical < critical_density) else z_bins[-1]
 
-        print(HD_limit_R)
-        print(HD_limit_z)   
-
-        # plt.plot(R_bins, midplane, label='Midplane Density')
-        # plt.xlabel('Cylindrical Radius ($R_{\\oplus}$)')
-        # plt.ylabel('Density (particles per $R_{\\oplus}^{3}$)')
-        # plt.yscale('log')
-        # plt.savefig('midplane_density.png', bbox_inches='tight')
-        # plt.close()
-
-        # plt.plot(z_bins, vertical, label='Vertical Density')
-        # plt.xlabel('Height ($R_{\\oplus}$)')
-        # plt.ylabel('Density (particles per $R_{\\oplus}^{3}$)')
-        # plt.yscale('log')
-        # plt.savefig('vertical_density.png', bbox_inches='tight')
-        # plt.close() 
-
-        # plt.contourf(R_bins, z_bins, Rz_density.T, levels=100, cmap='viridis')
-        # plt.colorbar(label='Particle Density (particles per $R_{\\oplus}^{3}$)')
-        # plt.contour(R_bins, z_bins, Rz_density.T, [100], colors='red', linewidths=0.5)
-        # plt.xlabel('Cylindrical Radius ($R_{\\oplus}$)')
-        # plt.ylabel('Height ($R_{\\oplus}$)')
-        
-        # plt.xlim([0, 10])
-        # plt.ylim([0, 10])
-
-        # plt.savefig('particle_density.png', bbox_inches='tight')
-        # plt.close()
+        # print(HD_limit_R)
+        # print(HD_limit_z)
 
         return HD_limit_R * Rearth, HD_limit_z * Rearth
 

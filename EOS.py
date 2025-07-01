@@ -296,10 +296,10 @@ else:
 # interpolators for the vapor curves
 S_vc = np.concatenate([[0], np.flip(NewEOS.vc.Sl), NewEOS.vc.Sv])
 P_vc = np.concatenate([[1e-7], np.flip(NewEOS.vc.Pl), NewEOS.vc.Pv])
-P_vapor_curve = interp1d(S_vc, P_vc, bounds_error=False, fill_value=np.NaN)
-S_vapor_curve_l = interp1d(NewEOS.vc.Pl, NewEOS.vc.Sl, bounds_error=False, fill_value=np.NaN)
-S_vapor_curve_v = interp1d(NewEOS.vc.Pv, NewEOS.vc.Sv, bounds_error=False, fill_value=np.NaN)
-rho_vapor_curve_l = interp1d(NewEOS.vc.Pl, NewEOS.vc.rl, bounds_error=False, fill_value=np.NaN)
+P_vapor_curve = interp1d(S_vc, P_vc, bounds_error=False, fill_value=np.nan)
+S_vapor_curve_l = interp1d(NewEOS.vc.Pl, NewEOS.vc.Sl, bounds_error=False, fill_value=np.nan)
+S_vapor_curve_v = interp1d(NewEOS.vc.Pv, NewEOS.vc.Sv, bounds_error=False, fill_value=np.nan)
+rho_vapor_curve_l = interp1d(NewEOS.vc.Pl, NewEOS.vc.rl, bounds_error=False, fill_value=np.nan)
 
 # for a given value of S and P, returns the S value of the condensation point
 # (or returns the input S if above the critical point)
@@ -424,7 +424,7 @@ def generate_table_alpha_v():
             else:
                 T_table[i, j] = 0
 
-    T3_interp = RegularGridInterpolator((log_alpha, log_rho), T_table, method=method, bounds_error=False, fill_value=np.NaN)
+    T3_interp = RegularGridInterpolator((log_alpha, log_rho), T_table, method=method, bounds_error=False, fill_value=np.nan)
 
 
 generate_table_alpha_v()

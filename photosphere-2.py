@@ -9,6 +9,7 @@ from swiftsimio.visualisation import slice_gas
 from unyt import Rearth
 
 from snapshot_analysis import snapshot
+import EOS as fst
 
 # constants and function definitions
 sigma = 5.670374419e-8 # stefan-boltzmann constant
@@ -66,7 +67,7 @@ class photosphere:
 
             mass_weighted_slice = slice_gas(
                 self.snapshot.data,
-                z_slice=0,
+                z_slice=center[2],
                 resolution=resolution,
                 project=f'{parameter}_mass_weighted',
                 region=limits,
@@ -92,12 +93,32 @@ class photosphere:
         angular_momenta.convert_to_mks()
         r_range.convert_to_mks()
 
-        self.rho = np.mean(densities, axis=0)
-        self.T = np.mean(temperatures, axis=0)
-        self.P = np.mean(pressures, axis=0)
-        self.s = np.mean(entropies, axis=0)
-        self.L = np.mean(angular_momenta, axis=0)
-        self.r = r_range
+        self.rho = jnp.array(np.mean(densities, axis=0))
+        self.T = jnp.array(np.mean(temperatures, axis=0))
+        self.P = jnp.array(np.mean(pressures, axis=0))
+        self.s = jnp.array(np.mean(entropies, axis=0))
+        self.L = jnp.array(np.mean(angular_momenta, axis=0))
+        self.r = jnp.array(r_range)
+
+        # extrapolate entropy here !
+
+    def solve_dPdr(self):
+        pass
+
+    def calculate_EOS(self):
+        pass
+
+    def remove_droplets(self):
+        pass
+
+    def calculate_luminosity(self):
+        pass
+
+    def cool_step(self, dt):
+        pass
+
+    def cool(self, t):
+        pass
 
 
 if __name__ == "__main__":

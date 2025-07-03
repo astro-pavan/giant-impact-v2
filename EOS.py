@@ -59,8 +59,8 @@ S_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.S.T, method=me
 cs_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.cs.T, method=method, bounds_error=False, fill_value=None)
 
 # blank interpolators to be filled in later
-rho_interp, T_interp = lambda x: np.full_like(x, np.NaN), lambda x: np.full_like(x, np.NaN)
-T2_interp = lambda x: np.full_like(x, np.NaN)
+rho_interp, T_interp = lambda x: np.full_like(x, np.nan), lambda x: np.full_like(x, np.nan)
+T2_interp = lambda x: np.full_like(x, np.nan)
 
 # range for the (S, P) -> (rho, T) interpolator
 S_range, log_P_range = [1000, 20000], [-6, 13]
@@ -331,7 +331,7 @@ def vapor_quality(S, P):
 
     vq = (S - Sl) / (Sv - Sl)
     p = phase(S, P)
-    result = np.where(p == 2, vq, np.NaN)
+    result = np.where(p == 2, vq, np.nan)
     result = np.where(p == 1, 0, result)
     result = np.where(p == 3, 1, result)
     return result

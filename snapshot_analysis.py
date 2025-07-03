@@ -73,7 +73,7 @@ colormaps = {
 class snapshot:
 
     # note: plot rotation will plot a scatter plot of the particle angular velocity
-    def __init__(self, filename, plot_rotation=False):
+    def __init__(self, filename, plot_rotation=True):
 
         # loads particle data
         self.data = sw.load(filename)
@@ -108,7 +108,7 @@ class snapshot:
 
     # calculates the EOS for all particles
     def calculate_EOS(self):
-        print('Applying EOS to particles...')
+        # print('Applying EOS to particles...')
 
         gas = self.data.gas
         woma.load_eos_tables()
@@ -140,7 +140,7 @@ class snapshot:
 
         gas.material_ids_mass_weighted = gas.material_ids * gas.masses
 
-        print('EOS calculated')
+        # print('EOS calculated')
 
     # calculates the centre of mass in the snapshot
     def get_center_of_mass(self):
@@ -153,7 +153,7 @@ class snapshot:
             mass_sum += densities[i]
         center_of_mass = np.array(mass_pos_sum / mass_sum) * Rearth
 
-        print(f'Center of mass found at {center_of_mass}')
+        # print(f'Center of mass found at {center_of_mass}')
         return center_of_mass
 
     # calculates the mass within a given radius (r needs to be in unyt form)
@@ -201,12 +201,12 @@ class snapshot:
 
         self.total_angular_momentum = np.sum(h * masses)
         self.total_angular_momentum.convert_to_mks()
-        print(f'Total angular momentum of particles {self.total_angular_momentum:.4e}')
+        # print(f'Total angular momentum of particles {self.total_angular_momentum:.4e}')
         self.total_angular_momentum = self.total_angular_momentum.value
 
         self.total_specific_angular_momentum = np.sum(h) * ((m ** 2)/s)
         self.total_specific_angular_momentum.convert_to_mks()
-        print(f'Total specific angular momentum of particles {self.total_specific_angular_momentum:.4e}')
+        # print(f'Total specific angular momentum of particles {self.total_specific_angular_momentum:.4e}')
 
         gas.radial_velocity = sw.objects.cosmo_array(v_r)
         gas.radial_velocity.cosmo_factor = gas.internal_energies.cosmo_factor
@@ -239,7 +239,7 @@ class snapshot:
         vertical = Rz_density[0, :]  # get the vertical density
         midplane = Rz_density[:, 0] # get the midplane density
 
-        critical_density = 1000  # set the critical density for analysis
+        critical_density = 1  # set the critical density for analysis
 
         # Find the R_bin where midplane goes below critical_density for the first time
         HD_limit_R = R_bins[np.argmax(midplane < critical_density)] if np.any(midplane < critical_density) else R_bins[-1]
@@ -252,12 +252,12 @@ class snapshot:
         return HD_limit_R * Rearth, HD_limit_z * Rearth
 
     # analyses the rotation of the particles to produce a best fit rotation curve
-    def rotational_analysis(self, plot_output=False):
+    def rotational_analysis(self, plot_output=True):
 
         self.R_xy.convert_to_mks()
 
         # gets the particles in a valid region and takes the log of the cylindrical radius and angular velocity
-        midplane_mask = (np.abs(self.z) < 0.5 * Rearth) & (self.R_xy < self.HD_limit_R)
+        midplane_mask = (np.abs(self.z) < 0.1 * Rearth) & (self.R_xy < self.HD_limit_R)
         log_R, log_omega = np.log10(self.R_xy[midplane_mask]), np.log10(self.data.gas.angular_velocity[midplane_mask])
 
         # removes invalid values (NaN and inf)
@@ -279,15 +279,18 @@ class snapshot:
             print('ERROR: UNABLE TO MODEL OMEGA')
             a0, b0, c0 = 0, 0, 0
 
+        omega_keplerian = lambda R: np.sqrt((6.674e-11 * self.total_mass) / (R ** 3))
+
         def best_fit_mks(R):
-            return 10 ** (two_lines(np.log10(R), a0, b0, c0))
+            fit_fun = lambda x : 10 ** two_lines(np.log10(x), a0, b0, c0)
+            return np.minimum(fit_fun(R), omega_keplerian(R))
 
         CoRoL = b0 * m
 
-        omega_keplerian = lambda R: np.sqrt((6.674e-11 * self.total_mass) / (R ** 3))
-
         x2 = np.logspace(b0, 10)
         x1 = np.logspace(4, b0)
+
+        print(c0)
 
         if plot_output:
 
@@ -310,14 +313,15 @@ class snapshot:
             plt.plot(np.log10(x1), np.log10(np.full_like(x1, 10 ** a0)), 'r--')
             plt.xlabel('$\log_{10}$[Cyl. Radius (m)]')
             plt.ylabel('$\log_{10}$[Angular velocity (rad/s)]')
-            # plt.axvspan(10, 100, alpha=0.5, color='grey')
-            # plt.xlim([1e-1, 1e2])
+            # plt.axvline(np.log10(self.HD_limit_R), linestyle='-.', color='green', label='Extrapolation limit')
+            plt.axvspan(1, np.log10(self.HD_limit_R), alpha=0.5, color='grey')
             # plt.ylim([1e-8, 1e-2])
             plt.legend()
             plt.colorbar(label='Number of particles')
 
-            plt.savefig('figures/rotation.png', bbox_inches='tight')
-            plt.savefig('figures/rotation.pdf', bbox_inches='tight')
+            plt.savefig('rotation.png', bbox_inches='tight')
+            plt.savefig('rotation.pdf', bbox_inches='tight')
+            plt.close()
 
         return best_fit_mks, CoRoL
 

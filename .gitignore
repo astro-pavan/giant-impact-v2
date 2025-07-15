@@ -5,4 +5,4 @@ figures
 *.hdf5
 *.txt
 *.pyc
-/__pycache__
+__pycache__/

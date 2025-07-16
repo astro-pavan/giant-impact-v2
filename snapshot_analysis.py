@@ -1,3 +1,5 @@
+# type: ignore
+
 # reads snapshots of SWIFT simulations for plotting and analysis
 # handles the data on the particle level
 
@@ -290,7 +292,7 @@ class snapshot:
         x2 = np.logspace(b0, 10)
         x1 = np.logspace(4, b0)
 
-        print(c0)
+        # print(c0)
 
         if plot_output:
 

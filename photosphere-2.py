@@ -1,11 +1,13 @@
+# type: ignore
+
 # extracts data from a snapshot and analyses it, producing a 1D photosphere model
 # all values are in SI units unless otherwise specified
 
-import jax.numpy as jnp
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import CubicSpline
 from scipy.integrate import solve_ivp
+from tqdm import tqdm
 
 from swiftsimio.visualisation import slice_gas
 from unyt import Rearth
@@ -35,7 +37,7 @@ class photosphere:
 
         resolution = 1000
         sample_size = 10 * Rearth
-        max_size = 50 * 6371000
+        max_size = 100 * 6371000
 
         # calculate the center of the snapshot and set the limits for the slice
         center = self.snapshot.center_of_mass
@@ -122,30 +124,17 @@ class photosphere:
         self.s = np.where(self.r < self.extrapolate_r, self.s, s_extrapolation_value)
         self.s_interpolation = CubicSpline(self.r, self.s)
 
+        self.omega = self.snapshot.best_fit_rotation_curve_mks(self.r)
+        self.omega_keplerian = np.sqrt((G * self.snapshot.total_mass) / (self.r ** 3))
+
         self.R_phot, self.T_phot, self.L_phot = 0, 0, 0
 
         self.solve_dPdr()
-        self.calculate_EOS()
+        self.apply_EOS()
+        self.remove_droplets()
         self.calculate_luminosity()
 
     def solve_dPdr(self):
-        
-        omega_r = self.snapshot.best_fit_rotation_curve_mks(self.r)
-        gravity_r = G * self.snapshot.total_mass / (self.r ** 2)
-
-        # plt.plot(self.r / 6371000, omega_r ** 2 * self.r)
-        # plt.plot(self.r / 6371000, gravity_r)
-        # plt.xlim([0, 20])
-        # plt.yscale('log')
-        # plt.savefig('omega_profile.png')
-        # plt.close()
-
-        plt.plot(self.r / 6371000, (omega_r ** 2 * self.r) - gravity_r)
-        plt.axhline(0, c='black')
-        plt.xlim([2, 20])
-        plt.ylim([-0.3, +0.3])
-        plt.savefig('omega_profile_2.png')
-        plt.close()
         
         def dPdr(r, P):
             
@@ -171,45 +160,37 @@ class photosphere:
             )
         
         self.P[self.extrapolation_index:] = solution.y[0]
-
-        plt.plot(self.r / 6371000, self.P)
-        plt.yscale('log')
-        plt.axvline(self.extrapolate_r / 6371000, c='green')
-        plt.xlim([0, 20])
-        plt.savefig('P_profile.png')
-        plt.close()
         
-    def calculate_EOS(self):
+    def apply_EOS(self):
         
         self.rho = np.nan_to_num(fst.rho_EOS(self.s, self.P))
         self.T = fst.T1_EOS(self.s, self.P)
         self.u = fst.u_EOS(self.s, self.P)
 
-        plt.plot(self.r / 6371000, self.T)
-        # plt.yscale('log')
-        plt.axvline(self.extrapolate_r / 6371000, c='green')
-        plt.xlim([0, 20])
-        plt.savefig('T_profile.png')
-        plt.close()
+        self.dm = self.rho * self.dV
+        self.dE = self.dm * self.u        
 
-        plt.plot(self.r / 6371000, self.s)
-        # plt.yscale('log')
-        plt.axvline(self.extrapolate_r / 6371000, c='green')
-        plt.xlim([0, 20])
-        plt.savefig('s_profile.png')
-        plt.close()
+    def remove_droplets(self, max_infall_time=1e4):
 
-        plt.plot(self.r / 6371000, self.rho)
-        plt.yscale('log')
-        plt.axvline(self.extrapolate_r / 6371000, c='green')
-        plt.xlim([0, 20])
-        plt.savefig('rho_profile.png')
-        plt.close()
+        phase = fst.phase(self.s, self.P)
+        
+        D0 = 1e-3
+        CD = 0.5
 
-        self.dE = self.rho * self.dV * self.u
+        rho_droplet = fst.rho_liquid(self.P)
+        rho_vapour = fst.rho_vapor(self.rho, self.s, self.P)
 
-    def remove_droplets(self):
-        pass
+        v_relative = np.abs(self.r * (self.omega_keplerian - self.omega))
+        v_orbit = self.r * self.omega_keplerian
+        t_infall = (2 * rho_droplet * D0 * v_orbit) / (rho_vapour * CD * (v_relative ** 2))
+
+        condensation_mask = phase == 2
+        remove_mask = condensation_mask & (t_infall < max_infall_time)
+
+        new_s = fst.condensation_S(self.s, self.P)
+        self.s = np.where(remove_mask, new_s, self.s)
+        self.apply_EOS()
+
 
     def calculate_luminosity(self):
         
@@ -225,23 +206,63 @@ class photosphere:
         self.T_phot = self.T[photosphere_index]
         self.L_phot = 4 * pi * (self.R_phot ** 2) * sigma * (self.T_phot ** 4)
 
-        plt.plot(self.r / 6371000, self.tau)
-        plt.yscale('log')
-        plt.axvline(self.R_phot / 6371000, c='red')
-        plt.axvline(self.extrapolate_r / 6371000, c='green')
-        plt.xlim([0, 20])
-        plt.savefig('profile.png')
-        plt.close()
-
         print(f'Luminosity : {self.L_phot / 3.8e26} L_sun')
 
     def cool_step(self, dt):
-        pass
+        
+        inside_photosphere_mask = self.tau > 1
+        pressure_mask = self.P < 1e11
 
-    def cool(self, t):
-        pass
+        E_inner_region = np.sum(self.dE[inside_photosphere_mask])
+        m_inner_region = np.sum(self.dm[inside_photosphere_mask])
+        E_lost = self.L_phot * dt
+        u_avg = E_inner_region / m_inner_region
+        u_avg_lost = E_lost / m_inner_region
+        loss_factor = (1 - u_avg_lost / u_avg) if m_inner_region > 1 else 1
+
+        print(loss_factor)
+        assert loss_factor <= 1
+
+        self.u = np.where(pressure_mask, self.u * loss_factor, u)
+        self.T = np.nan_to_num(fst.T2_EOS(self.u, self.rho))
+        self.P = fst.P_EOS(self.rho, self.T)
+        self.s = fst.S_EOS(self.rho, self.T)
+        self.dE = self.dm * self.u 
+
+    def cool(self, max_time, n=100):
+
+        dt = max_time / n
+        t_current = 0
+
+        t, L, R, T = [t_current], [self.L_phot], [self.R_phot], [self.T_phot]
+
+        for i in tqdm(range(n)):
+
+            t_current += dt
+            self.cool_step(dt)
+            self.remove_droplets(dt)
+            self.calculate_luminosity()
+
+            t.append(t_current)
+            L.append(self.L_phot)
+            R.append(self.R_phot)
+            T.append(self.T_phot)
+
+        t, L, R, T = np.array(t), np.array(L), np.array(R), np.array(T)
+
+        i_half = np.argmin((L / L[0]) > 0.5)
+        i_tenth = np.argmin((L / L[0]) > 0.1)
+        t_half, t_tenth = t[i_half], t[i_tenth]
+
+        return t, L, R, T, t_half, t_tenth
 
 
 if __name__ == "__main__":
 
     p1 = photosphere("snapshot_0240.hdf5")
+    t, L, R, T, t_half, t_tenth = p1.cool(10 * yr, n=1000)
+
+    plt.plot(t / yr, L / L_sun)
+    plt.xlabel('t')
+    plt.ylabel('L')
+    plt.savefig('cooling.png')

@@ -1,3 +1,5 @@
+# type: ignore
+
 # calcluates EOS and absorption for forsterite
 # fully in SI units
 

@@ -11,6 +11,7 @@ from tqdm import tqdm
 
 from swiftsimio.visualisation import slice_gas
 from unyt import Rearth
+import woma
 
 from snapshot_analysis import snapshot
 import EOS as fst
@@ -28,6 +29,8 @@ pi = np.pi
 cos = lambda theta: np.cos(theta)
 sin = lambda theta: np.sin(theta)
 
+woma.load_eos_tables(['ANEOS_forsterite'])
+
 class photosphere:
 
     def __init__(self, filename):
@@ -35,7 +38,7 @@ class photosphere:
         self.filename = filename
         self.snapshot = snapshot(filename)
 
-        resolution = 1000
+        resolution = 200
         sample_size = 10 * Rearth
         max_size = 100 * 6371000
 
@@ -129,8 +132,11 @@ class photosphere:
 
         self.R_phot, self.T_phot, self.L_phot = 0, 0, 0
 
+        print('Loaded data')
+        print('')
+
         self.solve_dPdr()
-        self.apply_EOS()
+        # self.apply_EOS()
         self.remove_droplets()
         self.calculate_luminosity()
 
@@ -160,15 +166,33 @@ class photosphere:
             )
         
         self.P[self.extrapolation_index:] = solution.y[0]
+        self.rho = np.nan_to_num(fst.rho_EOS(self.s, self.P))
+        self.T = fst.T1_EOS(self.s, self.P)
+        self.u = woma.A1_u_rho_T(self.rho, self.T, np.full_like(self.rho, 400)) 
+        self.remove_nans()
+        self.dm = self.rho * self.dV
+        self.dE = self.dm * self.u   
         
     def apply_EOS(self):
         
         self.rho = np.nan_to_num(fst.rho_EOS(self.s, self.P))
         self.T = fst.T1_EOS(self.s, self.P)
-        self.u = fst.u_EOS(self.s, self.P)
+        # self.u = fst.u_EOS(self.s, self.P)
 
+        self.u = woma.A1_u_rho_T(self.rho, self.T, np.full_like(self.rho, 400)) 
         self.dm = self.rho * self.dV
-        self.dE = self.dm * self.u        
+        self.dE = self.dm * self.u  
+
+    def remove_nans(self):
+        self.rho = np.nan_to_num(self.rho)
+        self.T = np.nan_to_num(self.T)
+        self.P = np.nan_to_num(self.P)
+        self.s = np.nan_to_num(self.s)
+        self.u = np.nan_to_num(self.u)
+        # self.dE = np.nan_to_num(self.dE)
+        # self.alpha = np.nan_to_num(self.alpha)
+        # self.alpha_v = np.nan_to_num(self.alpha_v)
+        # self.tau = np.nan_to_num(self.tau)
 
     def remove_droplets(self, max_infall_time=1e4):
 
@@ -189,7 +213,13 @@ class photosphere:
 
         new_s = fst.condensation_S(self.s, self.P)
         self.s = np.where(remove_mask, new_s, self.s)
-        self.apply_EOS()
+        self.rho = np.nan_to_num(fst.rho_EOS(self.s, self.P))
+        self.T = fst.T1_EOS(self.s, self.P)
+        self.u = woma.A1_u_rho_T(self.rho, self.T, np.full_like(self.rho, 400))
+        self.remove_nans()
+        self.dm = self.rho * self.dV
+        self.dE = self.dm * self.u
+        # self.apply_EOS()
 
 
     def calculate_luminosity(self):
@@ -206,28 +236,51 @@ class photosphere:
         self.T_phot = self.T[photosphere_index]
         self.L_phot = 4 * pi * (self.R_phot ** 2) * sigma * (self.T_phot ** 4)
 
-        print(f'Luminosity : {self.L_phot / 3.8e26} L_sun')
+        print(f'Luminosity : {self.L_phot / 3.8e26:.2e} L_sun')
 
     def cool_step(self, dt):
         
-        inside_photosphere_mask = self.tau > 1
-        pressure_mask = self.P < 1e11
+        # self.plot('a')
 
-        E_inner_region = np.sum(self.dE[inside_photosphere_mask])
-        m_inner_region = np.sum(self.dm[inside_photosphere_mask])
+        inside_photosphere_mask = self.tau > 1
+        pressure_mask = self.P < 1e10
+
+        E_inner_region = np.sum(self.dE[inside_photosphere_mask & pressure_mask])
+        m_inner_region = np.sum(self.dm[inside_photosphere_mask & pressure_mask])
+
+        assert m_inner_region > 0
+        assert E_inner_region > 0
+
         E_lost = self.L_phot * dt
         u_avg = E_inner_region / m_inner_region
         u_avg_lost = E_lost / m_inner_region
         loss_factor = (1 - u_avg_lost / u_avg) if m_inner_region > 1 else 1
 
-        print(loss_factor)
-        assert loss_factor <= 1
+        print(f'Energy : {E_inner_region:.2e} J')
+        print(f'Cooling time : {E_inner_region / self.L_phot:.2e} s')
+        print(f'dt : {dt:.2e}')
+        print(f'Loss factor : {loss_factor}')
+        print('')
 
-        self.u = np.where(pressure_mask, self.u * loss_factor, u)
-        self.T = np.nan_to_num(fst.T2_EOS(self.u, self.rho))
-        self.P = fst.P_EOS(self.rho, self.T)
-        self.s = fst.S_EOS(self.rho, self.T)
-        self.dE = self.dm * self.u 
+        assert loss_factor <= 1
+        assert E_inner_region > 0
+
+        self.u = np.where(pressure_mask, self.u * loss_factor, self.u)
+        # self.T = np.nan_to_num(fst.T2_EOS(self.u, self.rho))
+        self.T = woma.A1_T_rho_u(self.rho, self.u, np.full_like(self.rho, 400))
+        # self.P = fst.P_EOS(self.rho, self.T)
+        # self.s = fst.S_EOS(self.rho, self.T)
+        self.P = woma.A1_P_rho_u(self.rho, self.u, np.full_like(self.rho, 400))
+        self.s = woma.A1_s_rho_u(self.rho, self.u, np.full_like(self.rho, 400))
+        self.remove_nans()
+        self.dm = self.rho * self.dV
+        self.dE = self.dm * self.u
+
+        # self.plot('b')
+
+        # assert np.all(self.P > 1e-3)
+
+        assert np.sum(self.dE[inside_photosphere_mask & pressure_mask]) > 0
 
     def cool(self, max_time, n=100):
 
@@ -236,7 +289,7 @@ class photosphere:
 
         t, L, R, T = [t_current], [self.L_phot], [self.R_phot], [self.T_phot]
 
-        for i in tqdm(range(n)):
+        for i in range(n):
 
             t_current += dt
             self.cool_step(dt)
@@ -255,12 +308,41 @@ class photosphere:
         t_half, t_tenth = t[i_half], t[i_tenth]
 
         return t, L, R, T, t_half, t_tenth
+    
+    def plot(self, filename):
+        fig, axs = plt.subplots(3, 2, figsize=(12, 12), sharex=True)
+        axs = axs.flatten()
+
+        quantities = [self.rho, self.T, self.P, self.s, self.u, self.tau]
+        labels = [r'$\rho$ [kg/m$^3$]', 'T [K]', 'P [Pa]', 's [J/K/kg]', 'u [J/kg]', r'$\tau$']
+        titles = [r'Density $\rho$', 'Temperature T', 'Pressure P', 'Entropy s', 'Internal Energy u', 'Optical Depth τ']
+        ylim = [(1e-3, 1e4), (1000, 8000), (1e3, 1e11), (2000, 10000), (1e7, 3e7), (1e-7, 1e20)]
+
+        for i, (ax, y, label, title) in enumerate(zip(axs, quantities, labels, titles)):
+            y = np.nan_to_num(y, posinf=0, neginf=0)
+            assert np.all(np.isfinite(y))
+            assert np.all(np.isfinite(self.r))
+            ax.plot(self.r / R_earth, y)
+            ax.set_yscale('log')
+            ax.set_ylabel(label)
+            ax.set_xlim([0, 25])
+            ax.set_ylim(ylim[i])
+            ax.grid(True, which='both', ls='--', lw=0.5)
+
+            plt.savefig(f'{filename}.png')
+
+        for ax in axs[4:]:
+            ax.set_xlabel('r [R_Earth]')
+
+        plt.tight_layout()
+        plt.savefig(f'{filename}.png')
+        plt.close()
 
 
 if __name__ == "__main__":
 
     p1 = photosphere("snapshot_0240.hdf5")
-    t, L, R, T, t_half, t_tenth = p1.cool(10 * yr, n=1000)
+    t, L, R, T, t_half, t_tenth = p1.cool(5 * yr, n=2000)
 
     plt.plot(t / yr, L / L_sun)
     plt.xlabel('t')

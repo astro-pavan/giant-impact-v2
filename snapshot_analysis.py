@@ -248,8 +248,7 @@ class snapshot:
         # Find the z_bin where vertical goes below critical_density for the first time
         HD_limit_z = z_bins[np.argmax(vertical < critical_density)] if np.any(vertical < critical_density) else z_bins[-1]
 
-        # print(HD_limit_R)
-        # print(HD_limit_z)
+        print(f'Aspect ratio of ellipsoid remnant: {HD_limit_R / HD_limit_z}')
 
         return HD_limit_R * Rearth, HD_limit_z * Rearth
 
@@ -259,7 +258,7 @@ class snapshot:
         self.R_xy.convert_to_mks()
 
         # gets the particles in a valid region and takes the log of the cylindrical radius and angular velocity
-        midplane_mask = (np.abs(self.z) < 0.1 * Rearth) & (self.R_xy < self.HD_limit_R)
+        midplane_mask = (np.abs(self.z) < 0.1 * Rearth) # & (self.R_xy < self.HD_limit_R)
         log_R, log_omega = np.log10(self.R_xy[midplane_mask]), np.log10(self.data.gas.angular_velocity[midplane_mask])
 
         # removes invalid values (NaN and inf)

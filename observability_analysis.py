@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 from snapshot_analysis import snapshot
-from photosphere import photosphere, L_sun, yr
+from photosphere_old import photosphere, L_sun, yr
 from impact_analysis import get_filename
 
 impact_luminosity = 0.01  # L_sun

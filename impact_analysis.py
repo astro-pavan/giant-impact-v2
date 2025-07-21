@@ -9,7 +9,7 @@ import re
 import pandas as pd
 
 from snapshot_analysis import snapshot, gas_slice, data_labels
-from photosphere import photosphere, M_earth, L_sun, yr
+from photosphere_old import photosphere, M_earth, L_sun, yr
 import EOS as fst
 
 day = 3600 * 24

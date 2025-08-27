@@ -9,13 +9,13 @@ from scipy.interpolate import CubicSpline
 from scipy.integrate import solve_ivp
 from tqdm import tqdm
 
-from swiftsimio.visualisation import slice_gas
+from swiftsimio.visualisation import slice_gas, project_gas
 from unyt import Rearth
 import woma
 
 woma.load_eos_tables()
 
-from snapshot_analysis import snapshot
+from snapshot_analysis import snapshot, gas_slice
 import EOS as fst
 import EOS2
 
@@ -34,14 +34,21 @@ sin = lambda theta: np.sin(theta)
 
 class photosphere:
 
-    def __init__(self, filename):
+    def __init__(self, filename, pressure_floor=1e10, remove_droplets=True, orbital_period=10 * day):
 
         self.filename = filename
         self.snapshot = snapshot(filename)
 
+        self.droplet_removal = remove_droplets
+        self.pressure_floor = pressure_floor
+
+        max_size_mks = ((G * self.snapshot.total_mass * (orbital_period ** 2)) / (12 * np.pi * np.pi)) ** (1 / 3)
+        # max_size = (max_size_mks / 6371000) * Rearth
+        #print(f'Hill radius = {max_size}')
+
         resolution = 400
         sample_size = 10 * Rearth
-        max_size = 100 * 6371000
+        max_size = max_size_mks
 
         # calculate the center of the snapshot and set the limits for the slice
         center = self.snapshot.center_of_mass
@@ -103,6 +110,27 @@ class photosphere:
         self.s = np.array(np.mean(entropies, axis=0))
         self.r = np.array(r_range)
 
+        # mass_projection = project_gas(self.snapshot.data,
+        #                        resolution=5096,
+        #                        project="masses",
+        #                        parallel=True,
+        #                        region=limits
+        #                        )
+        
+        # mass_weighted_projection = project_gas(
+        #         self.snapshot.data,
+        #         resolution=5096,
+        #         project=f'entropy_mass_weighted',
+        #         parallel=True, 
+        #         region=limits
+        #     )
+        
+        # entropy_projection = mass_weighted_projection / mass_projection
+
+        # plt.imshow(mass_projection)
+        # plt.savefig('mass_projection.png')
+        # plt.close()
+        
         r_extension = np.linspace(self.r[-1], max_size, num=resolution // 2)
 
         self.r = np.concatenate((self.r, r_extension[1:]))
@@ -139,17 +167,8 @@ class photosphere:
 
         self.R_phot, self.T_phot, self.L_phot, self.P_phot = 0, 0, 0, 0
 
-        print('Loaded data')
-        print('')
-
-        self.plot('profile_init')
-
         self.solve_dPdr()
-        self.plot('droplets')
         self.remove_droplets()
-
-        self.plot('no-droplets')
-
         self.calculate_luminosity()
 
     def solve_dPdr(self):
@@ -233,37 +252,39 @@ class photosphere:
 
     def remove_droplets(self, max_infall_time=1e4):
 
-        phase = EOS2.phase(self.s, self.P)
-        
-        D0 = 1e-3
-        CD = 0.5
+        if self.droplet_removal:
 
-        rho_droplet = fst.rho_liquid(self.P)
-        rho_vapour = fst.rho_vapor(self.rho, self.s, self.P)
+            phase = EOS2.phase(self.s, self.P)
+            
+            D0 = 1e-3
+            CD = 0.5
 
-        v_relative = np.abs(self.r * (self.omega_keplerian - self.omega))
-        v_orbit = self.r * self.omega_keplerian
-        t_infall = (2 * rho_droplet * D0 * v_orbit) / (rho_vapour * CD * (v_relative ** 2))
+            rho_droplet = fst.rho_liquid(self.P)
+            rho_vapour = fst.rho_vapor(self.rho, self.s, self.P)
 
-        condensation_mask = phase == 2
-        remove_mask = condensation_mask & (t_infall < max_infall_time)
+            v_relative = np.abs(self.r * (self.omega_keplerian - self.omega))
+            v_orbit = self.r * self.omega_keplerian
+            t_infall = (2 * rho_droplet * D0 * v_orbit) / (rho_vapour * CD * (v_relative ** 2))
 
-        new_rho, new_T, new_s, new_u = EOS2.vapor_curve(self.P)
+            condensation_mask = phase == 2
+            remove_mask = condensation_mask & (t_infall < max_infall_time)
 
-        self.rho = np.where(remove_mask, new_rho, self.rho)
-        self.T = np.where(remove_mask, new_T, self.T)
-        self.s = np.where(remove_mask, new_s, self.s)
-        self.u = np.where(remove_mask, new_u, self.u)
+            new_rho, new_T, new_s, new_u = EOS2.vapor_curve(self.P)
 
-        # new_s = fst.condensation_S(self.s, self.P)
-        # self.s = np.where(remove_mask, new_s, self.s)
-        # self.rho = np.nan_to_num(fst.rho_EOS(self.s, self.P))
-        # self.T = fst.T1_EOS(self.s, self.P)
-        # self.u = woma.A1_u_rho_T(self.rho, self.T, np.full_like(self.rho, 400))
+            self.rho = np.where(remove_mask, new_rho, self.rho)
+            self.T = np.where(remove_mask, new_T, self.T)
+            self.s = np.where(remove_mask, new_s, self.s)
+            self.u = np.where(remove_mask, new_u, self.u)
 
-        # self.remove_nans()
-        self.dm = self.rho * self.dV
-        self.dE = self.dm * self.u
+            # new_s = fst.condensation_S(self.s, self.P)
+            # self.s = np.where(remove_mask, new_s, self.s)
+            # self.rho = np.nan_to_num(fst.rho_EOS(self.s, self.P))
+            # self.T = fst.T1_EOS(self.s, self.P)
+            # self.u = woma.A1_u_rho_T(self.rho, self.T, np.full_like(self.rho, 400))
+
+            # self.remove_nans()
+            self.dm = self.rho * self.dV
+            self.dE = self.dm * self.u
 
     def calculate_luminosity(self):
         
@@ -285,26 +306,18 @@ class photosphere:
 
         self.L_phot = A_phot * sigma * (self.T_phot ** 4)
 
-        print(f'Luminosity : {self.L_phot / 3.8e26:.2e} L_sun')
+        # print(f'Luminosity : {self.L_phot / 3.8e26:.2e} L_sun')
 
-    def cool_step(self, dt, diagnostic_plot=False):
-        
-        # self.plot('pre-error')
-
-        old_P = np.array(self.P)
-        old_u = np.array(self.u)
-
-        if diagnostic_plot:
-            self.plot('a')
+    def cool_step(self, dt):
 
         inside_photosphere_mask = self.tau > 1
-        pressure_mask = self.P < 1e10
+        pressure_mask = self.P < self.pressure_floor
 
         E_inner_region = np.sum(self.dE[inside_photosphere_mask & pressure_mask])
         m_inner_region = np.sum(self.dm[inside_photosphere_mask & pressure_mask])
 
         if m_inner_region <= 0:
-            print(self.P_phot)
+            # print(self.P_phot)
             self.plot('error')
             return True
 
@@ -313,12 +326,12 @@ class photosphere:
         u_avg_lost = E_lost / m_inner_region
         loss_factor = (1 - u_avg_lost / u_avg) if m_inner_region > 1 else 1
 
-        print(f'Available Internal Energy : {E_inner_region:.2e} J')
-        print(f'Cooling time : {E_inner_region / self.L_phot:.2e} s')
-        print(f'dt : {dt:.2e}')
-        print(f'{E_lost / E_inner_region:.5%} energy lost')
-        print(f'Loss factor : {loss_factor}')
-        print('')
+        # print(f'Available Internal Energy : {E_inner_region:.2e} J')
+        # print(f'Cooling time : {E_inner_region / self.L_phot:.2e} s')
+        # print(f'dt : {dt:.2e}')
+        # print(f'{E_lost / E_inner_region:.5%} energy lost')
+        # print(f'Loss factor : {loss_factor}')
+        # print('')
 
         assert loss_factor <= 1
         assert E_inner_region > 0
@@ -335,9 +348,6 @@ class photosphere:
         self.remove_nans()
         self.dm = self.rho * self.dV
         self.dE = self.dm * self.u
-
-        if diagnostic_plot:
-            self.plot('b')
 
         # if np.any(self.P < 1e-6):
         #     print(self.u)
@@ -360,8 +370,6 @@ class photosphere:
             plt.savefig('ru.png')
             plt.close()
 
-        assert np.sum(self.dE[inside_photosphere_mask & pressure_mask]) > 0
-
         return False
 
     def cool(self, max_time, n=100):
@@ -378,7 +386,7 @@ class photosphere:
             if self.L_phot < L_init / 100:
                 break
             
-            print(f't : {t_current / yr:.4f} yr')
+            # print(f't : {t_current / yr:.4f} yr')
             t_current += dt
             end = self.cool_step(dt)
             self.remove_droplets(dt)
@@ -437,12 +445,16 @@ if __name__ == "__main__":
 
     from test import get_filename
 
-    p1 = photosphere(get_filename(25, 4)) # 21*, 24*, 25*
+    # 21 may be a bad simulation (there appear to be 3 remnants)
+    # 24 and 25 have strange cooling curves
+
+    p1 = photosphere(get_filename(20, 4), pressure_floor=1e9) # 21*, 24*, 25*
     p1.plot('profile')
     t, L, R, T, t_half, t_tenth = p1.cool(20 * yr, n=10000)
     p1.plot('profile2')
 
     plt.plot(t / yr, L / L_sun)
+    plt.yscale('log')
     plt.xlabel('t')
     plt.ylabel('L')
     plt.savefig('cooling.png')

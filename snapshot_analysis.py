@@ -79,7 +79,7 @@ class snapshot:
 
         # loads particle data
         self.data = sw.load(filename)
-        print(f'Loaded {len(self.data.gas.densities)} particles')
+        # print(f'Loaded {len(self.data.gas.densities)} particles')
 
         self.box_size = self.data.gas.metadata.boxsize
         self.center_of_mass = self.get_center_of_mass()
@@ -87,7 +87,7 @@ class snapshot:
         self.data.gas.masses.convert_to_mks()
         self.total_mass = np.sum(self.data.gas.masses)
         self.total_mass.convert_to_units(M_earth)
-        print(f'Total mass of particles {self.total_mass:.4e}')
+        # print(f'Total mass of particles {self.total_mass:.4e}')
         self.total_mass.convert_to_mks()
         self.total_mass = self.total_mass.value
 
@@ -248,7 +248,7 @@ class snapshot:
         # Find the z_bin where vertical goes below critical_density for the first time
         HD_limit_z = z_bins[np.argmax(vertical < critical_density)] if np.any(vertical < critical_density) else z_bins[-1]
 
-        print(f'Aspect ratio of ellipsoid remnant: {HD_limit_R / HD_limit_z}')
+        # print(f'Aspect ratio of ellipsoid remnant: {HD_limit_R / HD_limit_z}')
 
         return HD_limit_R * Rearth, HD_limit_z * Rearth
 
@@ -320,8 +320,8 @@ class snapshot:
             plt.legend()
             plt.colorbar(label='Number of particles')
 
-            plt.savefig('rotation.png', bbox_inches='tight')
-            plt.savefig('rotation.pdf', bbox_inches='tight')
+            # plt.savefig('rotation.png', bbox_inches='tight')
+            # plt.savefig('rotation.pdf', bbox_inches='tight')
             plt.close()
 
         return best_fit_mks, CoRoL

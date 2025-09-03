@@ -1,0 +1,3 @@
+[submodule "gaiadr3_bcg"]
+	path = gaiadr3_bcg
+	url = https://gitlab.oca.eu/ordenovic/gaiadr3_bcg.git

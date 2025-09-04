@@ -1,8 +1,10 @@
-# analyses the observability of post impact bodies with Gaia
-import requests.exceptions
+# type: ignore
 
-import gdr3bcg.bcg as bcg
-correction_table = bcg.BolometryTable()
+# analyses the observability of post impact bodies with Gaia
+# import requests.exceptions
+
+import gaiadr3_bcg.gdr3bcg.bcg as bcg
+correction_table = bcg.BolometryTable(file='gaiadr3_bcg/gdr3bcg/data/bc_dr3_feh_all.dat')
 from astroquery.gaia import Gaia
 from astropy.table import Table
 from unyt import Rearth
@@ -15,13 +17,15 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 from snapshot_analysis import snapshot
-from photosphere_old import photosphere, L_sun, yr
-from impact_analysis import get_filename
+from photosphere import photosphere, L_sun, yr, day
+from test import get_filename
+
+import re
 
 impact_luminosity = 0.01  # L_sun
 impact_temp = 2800  # K
 
-M_bol_sun = 4.74
+M_bol_sun = 4.66
 
 M_bol_impact = M_bol_sun - 2.5 * np.log10(impact_luminosity)
 bol_correction_factor = correction_table.computeBc([impact_temp, 0.3, 0, 0])
@@ -36,7 +40,7 @@ def abs_mag(g_band_mag, parallax):
 
 def gaia_epoch_photometry():
 
-    query = "SELECT TOP 4000 gaia_source.source_id,gaia_source.ra,gaia_source.dec,gaia_source.parallax,gaia_source.parallax_error,gaia_source.parallax_over_error,gaia_source.ruwe,gaia_source.phot_g_n_obs,gaia_source.phot_g_mean_flux,gaia_source.phot_g_mean_flux_error,gaia_source.phot_g_mean_flux_over_error,gaia_source.phot_g_mean_mag,gaia_source.phot_bp_n_obs,gaia_source.phot_bp_mean_flux_error,gaia_source.phot_bp_mean_flux_over_error,gaia_source.phot_rp_n_obs,gaia_source.phot_rp_mean_flux_error,gaia_source.phot_rp_mean_flux_over_error,gaia_source.bp_rp,gaia_source.radial_velocity,gaia_source.phot_variable_flag,gaia_source.non_single_star,gaia_source.has_xp_continuous,gaia_source.has_epoch_photometry,gaia_source.has_mcmc_gspphot,gaia_source.has_mcmc_msc,gaia_source.teff_gspphot,gaia_source.teff_gspphot_lower,gaia_source.teff_gspphot_upper,gaia_source.logg_gspphot,gaia_source.mh_gspphot,gaia_source.distance_gspphot,gaia_source.azero_gspphot,gaia_source.ag_gspphot,gaia_source.ebpminrp_gspphot\n" +\
+    query = "SELECT TOP 10 gaia_source.source_id,gaia_source.ra,gaia_source.dec,gaia_source.parallax,gaia_source.parallax_error,gaia_source.parallax_over_error,gaia_source.ruwe,gaia_source.phot_g_n_obs,gaia_source.phot_g_mean_flux,gaia_source.phot_g_mean_flux_error,gaia_source.phot_g_mean_flux_over_error,gaia_source.phot_g_mean_mag,gaia_source.phot_bp_n_obs,gaia_source.phot_bp_mean_flux_error,gaia_source.phot_bp_mean_flux_over_error,gaia_source.phot_rp_n_obs,gaia_source.phot_rp_mean_flux_error,gaia_source.phot_rp_mean_flux_over_error,gaia_source.bp_rp,gaia_source.radial_velocity,gaia_source.phot_variable_flag,gaia_source.non_single_star,gaia_source.has_xp_continuous,gaia_source.has_epoch_photometry,gaia_source.has_mcmc_gspphot,gaia_source.has_mcmc_msc,gaia_source.teff_gspphot,gaia_source.teff_gspphot_lower,gaia_source.teff_gspphot_upper,gaia_source.logg_gspphot,gaia_source.mh_gspphot,gaia_source.distance_gspphot,gaia_source.azero_gspphot,gaia_source.ag_gspphot,gaia_source.ebpminrp_gspphot\n" +\
             "FROM gaiadr3.gaia_source\n" +\
             "WHERE has_epoch_photometry = 'True'"
 
@@ -45,10 +49,12 @@ def gaia_epoch_photometry():
     results = job.get_results()
     print(f'Table size (rows): {len(results)}')
 
+    # print(results.keys())
+
     retrieval_type, data_structure, data_release = 'EPOCH_PHOTOMETRY', 'INDIVIDUAL', 'Gaia DR3'
 
     print('Loading epoch photometry...')
-    datalink = Gaia.load_data(ids=results['SOURCE_ID'], data_release=data_release, retrieval_type=retrieval_type,
+    datalink = Gaia.load_data(ids=results['source_id'], data_release=data_release, retrieval_type=retrieval_type,
                               data_structure=data_structure, verbose=False, output_file=None)
     dl_keys = [inp for inp in datalink.keys()]
     dl_keys.sort()
@@ -63,22 +69,21 @@ def gaia_epoch_photometry():
         data_table = datalink[dl_key][0].to_table()
         data_table = Table(data_table)
 
-        source_id = data_table['source_id'][0]
+        match = re.search(r'\d{10,}', dl_key)
+        source_id = int(match.group())
 
-        entry = results[results['SOURCE_ID'] == source_id]
+        entry = results[results['source_id'] == source_id]
         g_mag = entry['phot_g_mean_mag'][0]
         mean_flux_frac_error = 1 / entry['phot_g_mean_flux_over_error'][0]
 
-        G_band_filter = data_table['band'] == 'G'
-
-        single_flux_frac_error = 1 / np.mean(data_table['flux_over_error'][G_band_filter])
+        single_flux_frac_error = 1 / np.mean(data_table['g_transit_flux_over_error'])
 
         mag.append(g_mag)
         mean.append(mean_flux_frac_error)
         single.append(single_flux_frac_error)
 
-        apparent_magnitude = np.concatenate((apparent_magnitude, np.array(data_table['mag'][G_band_filter])))
-        flux_fractional_error = np.concatenate((flux_fractional_error, np.array(1 / data_table['flux_over_error'][G_band_filter])))
+        apparent_magnitude = np.concatenate((apparent_magnitude, np.array(data_table['g_transit_mag'])))
+        flux_fractional_error = np.concatenate((flux_fractional_error, np.array(1 / data_table['g_transit_flux_over_error'])))
 
     mag = np.array(mag)
     single = np.array(single)
@@ -86,8 +91,8 @@ def gaia_epoch_photometry():
     def model(x, e1, b, m1):
         return e1 * 10 ** (b * (x - m1))
 
-    mag = apparent_magnitude
-    single = flux_fractional_error
+    mag = np.nan_to_num(apparent_magnitude)
+    single = np.nan_to_num(flux_fractional_error)
 
     fit = curve_fit(model, mag[mag > 16], single[mag > 16], p0=(1e-3, 0.25, 14), method='trf')
     e1, b, m1 = fit[0][0], fit[0][1], fit[0][2]
@@ -101,7 +106,11 @@ def gaia_epoch_photometry():
     x = np.linspace(10, 22)
     y = error(x)
 
-    plt.hist2d(mag, np.log10(single), bins=100, cmap='viridis', rasterized=True)
+    # print(np.log10(single))
+
+    inf_mask = ~np.isinf(np.log10(single))
+
+    plt.hist2d(mag[inf_mask], np.log10(single)[inf_mask], bins=100, cmap='viridis', rasterized=True)
     plt.plot(x, np.log10(y), 'r--')
     plt.xlabel('Apparent magnitude (G-band)')
     plt.ylabel('$\log_{10}$[Single flux mean fractional error]')
@@ -295,7 +304,7 @@ def gaia_analysis_v2():
     single_flux_frac_error = gaia_epoch_photometry()
 
     print('Loading Gaia sample...')
-    gaia_data = pd.read_csv('gaia_data.csv')
+    gaia_data = pd.read_csv('GaiaSource_000000-003111.csv', header=1000)
     print(gaia_data.keys())
     initial_n = len(gaia_data)
     print(f'{initial_n} stars loaded')
@@ -466,12 +475,14 @@ def simulated_light_curve(gaia_entry, size=(16, 12)):
 
     plt.hist(gaia_entry['phot_g_mean_mag'], bins=50)
     plt.show()
+    plt.close()
 
     # gaia_entry = gaia_entry[gaia_entry['abs_g_mag'] < 7]
     gaia_entry = gaia_entry[gaia_entry['phot_g_mean_mag'] > 18.8]
 
     plt.hist(gaia_entry['phot_g_mean_mag'], bins=50)
     plt.show()
+    plt.close()
 
     #gaia_entry = gaia_entry[gaia_entry['teff_gspphot'] > 4500]
 
@@ -495,37 +506,41 @@ def simulated_light_curve(gaia_entry, size=(16, 12)):
     print(f'd = {1/parallax} pc')
 
     filename = get_filename(2, 4)  # SIMULATION 0
-    snap = snapshot(filename)
 
-    phot = photosphere(snap, 12 * Rearth, resolution=800, period=20*24*3600, n_theta=20)
-    phot.set_up()
-    time, lum, A, R, T, m_dot, t2, t10 = phot.long_term_evolution()
-    lum, time = lum / L_sun, time / yr
-    time, lum = np.concatenate([[-0.0001], time]), np.concatenate([[0], lum])
-    light_curve_1 = interp1d(time, lum, bounds_error=False, fill_value=0)
+    phot = photosphere(filename, orbital_period=100*day)
+    time, lum, R, T, t_half, t_tenth = phot.cool(20 * yr, n=10000)
+    lum1, time1 = lum / L_sun, time / yr
+    time1, lum1 = np.concatenate([[-0.0001], time1]), np.concatenate([[0], lum1])
+    light_curve_1 = interp1d(time1, lum1, bounds_error=False, fill_value=0)
 
     filename = get_filename(0, 4)  # SIMULATION 2
-    snap = snapshot(filename)
 
-    phot = photosphere(snap, 12 * Rearth, resolution=800, period=20*24*3600, n_theta=20)
-    phot.set_up()
-    time, lum, A, R, T, m_dot, t2, t10 = phot.long_term_evolution()
-    lum, time = lum / L_sun, time / yr
-    time, lum = np.concatenate([[-0.0001], time]), np.concatenate([[0], lum])
-    light_curve_2 = interp1d(time, lum, bounds_error=False, fill_value=0)
+    phot = photosphere(filename, orbital_period=20*day)
+    time, lum, R, T, t_half, t_tenth = phot.cool(100 * yr, n=10000)
+    lum2, time2 = lum / L_sun, time / yr
+    time2, lum2 = np.concatenate([[-0.0001], time2]), np.concatenate([[0], lum2])
+    light_curve_2 = interp1d(time2, lum2, bounds_error=False, fill_value=0)
 
     filename = get_filename(7, 4)  # SIMULATION 6
-    snap = snapshot(filename)
 
-    phot = photosphere(snap, 12 * Rearth, resolution=800, period=20*24*3600, n_theta=20)
-    phot.set_up()
-    time, lum, A, R, T, m_dot, t2, t10 = phot.long_term_evolution()
-    lum, time = lum / L_sun, time / yr
-    time, lum = np.concatenate([[-0.0001], time]), np.concatenate([[0], lum])
-    light_curve_3 = interp1d(time, lum, bounds_error=False, fill_value=0)
+    phot = photosphere(filename, orbital_period=100*day)
+    time, lum, R, T, t_half, t_tenth = phot.cool(20 * yr, n=10000)
+    lum3, time3 = lum / L_sun, time / yr
+    time3, lum3 = np.concatenate([[-0.0001], time3]), np.concatenate([[0], lum3])
+    light_curve_3 = interp1d(time3, lum3, bounds_error=False, fill_value=0)
 
-    t_sample = (np.arange(-15, 70) * (30/365)) + (15/365)
-    t_continuous = np.linspace(-1, 5, num=3000)
+    plt.plot(time1, lum1)
+    plt.plot(time2, lum2)
+    plt.plot(time3, lum3)
+
+    plt.yscale('log')
+
+    plt.savefig('cooling.png')
+    plt.close()
+
+
+    t_sample = (np.arange(-15, 100) * (30/365)) + (15/365)
+    t_continuous = np.linspace(-1, 8, num=3000)
 
     L_1 = L + light_curve_1(t_sample)
     L_2 = L + light_curve_2(t_sample)
@@ -560,7 +575,7 @@ def simulated_light_curve(gaia_entry, size=(16, 12)):
     fig.set_dpi(300)
     plt.subplots_adjust(hspace=0)
 
-    xlim = [-0.5, 3]
+    xlim = [-0.5, 8]
 
     axs[0].scatter(t_sample, m_g_1, color='blue', s=10)
     axs[0].errorbar(t_sample, m_g_1, yerr=mag_error, fmt='none', color='blue')

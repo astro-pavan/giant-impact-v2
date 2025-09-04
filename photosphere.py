@@ -34,7 +34,7 @@ sin = lambda theta: np.sin(theta)
 
 class photosphere:
 
-    def __init__(self, filename, pressure_floor=1e10, remove_droplets=True, orbital_period=10 * day):
+    def __init__(self, filename, pressure_floor=1e9, remove_droplets=True, orbital_period=10 * day):
 
         self.filename = filename
         self.snapshot = snapshot(filename)
@@ -47,7 +47,7 @@ class photosphere:
         #print(f'Hill radius = {max_size}')
 
         resolution = 400
-        sample_size = 10 * Rearth
+        sample_size = np.minimum(10, max_size_mks / R_earth) * Rearth
         max_size = max_size_mks
 
         # calculate the center of the snapshot and set the limits for the slice
@@ -148,17 +148,20 @@ class photosphere:
         dr = np.diff(self.r)
         self.dr = np.concatenate([dr, [dr[-1]]])
 
-        self.aspect_ratio = self.snapshot.HD_limit_z.value / self.snapshot.HD_limit_R.value # ellipse correction factor
+        # self.aspect_ratio = self.snapshot.HD_limit_z.value / self.snapshot.HD_limit_R.value # ellipse correction factor
         self.aspect_ratio = 1
 
         self.dV = (4 * pi * self.r ** 2 * self.dr) * self.aspect_ratio
 
         self.extrapolate_r = self.snapshot.HD_limit_R.value  # density floor limit in meters
-        self.extrapolation_index = np.argmax(self.r > self.extrapolate_r)
-        self.s_extrapolation_value = self.s[self.extrapolation_index - 1]
 
-        self.s = np.where(self.r < self.extrapolate_r, self.s, self.s_extrapolation_value)
-        self.s_interpolation = CubicSpline(self.r, self.s)
+        if self.extrapolate_r < max_size:
+
+            self.extrapolation_index = np.argmax(self.r > self.extrapolate_r)
+            self.s_extrapolation_value = self.s[self.extrapolation_index - 1]
+
+            self.s = np.where(self.r < self.extrapolate_r, self.s, self.s_extrapolation_value)
+            self.s_interpolation = CubicSpline(self.r, self.s)
 
         self.u = woma.A1_u_rho_T(self.rho, self.T, np.full_like(self.rho, 400))
 
@@ -167,7 +170,9 @@ class photosphere:
 
         self.R_phot, self.T_phot, self.L_phot, self.P_phot = 0, 0, 0, 0
 
-        self.solve_dPdr()
+        if self.extrapolate_r < max_size:
+            self.solve_dPdr()
+
         self.remove_droplets()
         self.calculate_luminosity()
 
@@ -250,9 +255,9 @@ class photosphere:
         # self.alpha_v = np.nan_to_num(self.alpha_v)
         # self.tau = np.nan_to_num(self.tau)
 
-    def remove_droplets(self, max_infall_time=1e4):
+    def remove_droplets(self, max_infall_time=1e4, override=False):
 
-        if self.droplet_removal:
+        if self.droplet_removal or override:
 
             phase = EOS2.phase(self.s, self.P)
             
@@ -426,6 +431,7 @@ class photosphere:
             ax.set_xscale('log')
             ax.set_ylabel(label)
             ax.set_xlim([0, 100])
+            ax.axvline(self.extrapolate_r / R_earth)
             ax.axvline(self.R_phot / R_earth)
             # ax.set_ylim(ylim[i])
             ax.grid(True, which='both', ls='--', lw=0.5)
@@ -448,7 +454,7 @@ if __name__ == "__main__":
     # 21 may be a bad simulation (there appear to be 3 remnants)
     # 24 and 25 have strange cooling curves
 
-    p1 = photosphere(get_filename(20, 4), pressure_floor=1e9) # 21*, 24*, 25*
+    p1 = photosphere(get_filename(0, 4), pressure_floor=1e9, orbital_period=1 * day) # 21*, 24*, 25*
     p1.plot('profile')
     t, L, R, T, t_half, t_tenth = p1.cool(20 * yr, n=10000)
     p1.plot('profile2')

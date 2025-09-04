@@ -1,3 +1,5 @@
+# type: ignore
+
 # main analysis code
 import matplotlib.colors
 import numpy as np

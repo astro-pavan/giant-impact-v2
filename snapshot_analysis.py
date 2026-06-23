@@ -4,6 +4,7 @@
 # handles the data on the particle level
 
 import swiftsimio as sw
+from swiftsimio.objects import cosmo_array
 from matplotlib.colors import LogNorm, SymLogNorm
 from swiftsimio.visualisation.slice import slice_gas
 from swiftsimio.visualisation.rotation import rotation_matrix_from_vector
@@ -81,6 +82,14 @@ class snapshot:
         self.data = sw.load(filename)
         # print(f'Loaded {len(self.data.gas.densities)} particles')
 
+        try:
+            self.data.gas.coordinates.comoving = True
+            self.data.gas.coordinates.valid_transform = True
+            self.data.gas.metadata.boxsize.comoving = True
+            self.data.gas.metadata.boxsize.valid_transform = True
+        except Exception:
+            pass
+
         self.box_size = self.data.gas.metadata.boxsize
         self.center_of_mass = self.get_center_of_mass()
 
@@ -127,9 +136,9 @@ class snapshot:
             gas.material_ids_mass_weighted = gas.material_ids * gas.masses
             return
 
-        gas.temperatures = sw.objects.cosmo_array(T * K)
-        gas.pressures = sw.objects.cosmo_array(P * Pa)
-        gas.entropy = sw.objects.cosmo_array(S * ((J / K) / kg))
+        gas.temperatures = sw.objects.cosmo_array(T * K, comoving=False)
+        gas.pressures = sw.objects.cosmo_array(P * Pa, comoving=False)
+        gas.entropy = sw.objects.cosmo_array(S * ((J / K) / kg), comoving=False)
 
         gas.temperatures.cosmo_factor = gas.internal_energies.cosmo_factor
         gas.pressures.cosmo_factor = gas.internal_energies.cosmo_factor
@@ -193,11 +202,11 @@ class snapshot:
 
         # puts the calculated velocities into SWIFT arrays
 
-        gas.angular_velocity = sw.objects.cosmo_array(omega)
+        gas.angular_velocity = sw.objects.cosmo_array(omega, comoving=False)
         gas.angular_velocity.cosmo_factor = gas.internal_energies.cosmo_factor
         gas.angular_velocity_mass_weighted = gas.angular_velocity * gas.masses
 
-        gas.specific_angular_momentum = sw.objects.cosmo_array(h)
+        gas.specific_angular_momentum = sw.objects.cosmo_array(h, comoving=False)
         gas.specific_angular_momentum.cosmo_factor = gas.internal_energies.cosmo_factor
         gas.specific_angular_momentum_mass_weighted = gas.specific_angular_momentum * gas.masses
 
@@ -210,11 +219,11 @@ class snapshot:
         self.total_specific_angular_momentum.convert_to_mks()
         # print(f'Total specific angular momentum of particles {self.total_specific_angular_momentum:.4e}')
 
-        gas.radial_velocity = sw.objects.cosmo_array(v_r)
+        gas.radial_velocity = sw.objects.cosmo_array(v_r, comoving=False)
         gas.radial_velocity.cosmo_factor = gas.internal_energies.cosmo_factor
         gas.radial_velocity_mass_weighted = gas.radial_velocity * gas.masses
 
-        gas.vertical_velocity = sw.objects.cosmo_array(v_z)
+        gas.vertical_velocity = sw.objects.cosmo_array(v_z, comoving=False)
         gas.vertical_velocity.cosmo_factor = gas.internal_energies.cosmo_factor
         gas.vertical_velocity_mass_weighted = gas.vertical_velocity * gas.masses
 
@@ -344,10 +353,21 @@ class gas_slice:
         self.matrix = np.matmul(rotate_x, rotate_z)
 
         self.center = center * Rearth + self.snapshot.center_of_mass  # center of snapshot relative to the box coords
-        self.limits = [self.center[0] - self.size / 2,
-                       self.center[0] + self.size / 2,
-                       self.center[1] - self.size / 2,
-                       self.center[1] + self.size / 2]  # edges of snapshot relative to box coords
+        _comoving = self.snapshot.data.gas.coordinates.comoving
+        _cosmo_factor = self.snapshot.data.gas.coordinates.cosmo_factor
+        self.limits = cosmo_array(
+            [self.center[0] - self.size / 2,
+             self.center[0] + self.size / 2,
+             self.center[1] - self.size / 2,
+             self.center[1] + self.size / 2],
+            comoving=_comoving,
+            cosmo_factor=_cosmo_factor,
+        )
+        self.rotation_center = cosmo_array(
+            self.snapshot.center_of_mass,
+            comoving=_comoving,
+            cosmo_factor=_cosmo_factor,
+        )
 
         self.pixels_per_Rearth = int(self.resolution / self.size)
 
@@ -367,8 +387,9 @@ class gas_slice:
             project="masses",
             region=self.limits,
             rotation_matrix=self.matrix,
-            rotation_center=self.snapshot.center_of_mass,
-            parallel=True
+            rotation_center=self.rotation_center,
+            parallel=True,
+            periodic=False,
         )
 
         self.data['rho'].convert_to_units(kg / m ** 3)
@@ -381,8 +402,9 @@ class gas_slice:
                 project=f'{parameter}_mass_weighted',
                 region=self.limits,
                 rotation_matrix=self.matrix,
-                rotation_center=self.snapshot.center_of_mass,
-                parallel=True
+                rotation_center=self.rotation_center,
+                parallel=True,
+                periodic=False,
             )
 
             return mass_weighted_slice / self.data['rho']

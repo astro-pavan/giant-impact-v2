@@ -97,15 +97,30 @@ class photosphere:
             rotate_z = rotation_matrix_from_vector([np.cos(phi), np.sin(phi), 0], axis='z')
             rotate_x = rotation_matrix_from_vector([np.cos(phi), np.sin(phi), 0], axis='x')
             matrix = np.matmul(rotate_x, rotate_z)
-            limits = [center[0] - sample_size, center[0] + sample_size, center[1] - sample_size,
-                      center[1] + sample_size]
+
+            from swiftsimio.objects import cosmo_array
+            _comoving = snapshot.data.gas.coordinates.comoving
+            _cosmo_factor = snapshot.data.gas.coordinates.cosmo_factor
+            limits = cosmo_array(
+                [center[0] - sample_size, center[0] + sample_size,
+                 center[1] - sample_size, center[1] + sample_size],
+                comoving=_comoving,
+                cosmo_factor=_cosmo_factor,
+            )
+            rotation_center = cosmo_array(
+                center,
+                comoving=_comoving,
+                cosmo_factor=_cosmo_factor,
+            )
 
             # loads density slice
             mass_slice = slice_gas(snapshot.data,
                                    z_slice=0,
                                    resolution=resolution,
                                    project="masses",
-                                   region=limits, rotation_matrix=matrix, rotation_center=center,
+                                   region=limits, rotation_matrix=matrix,
+                                   rotation_center=rotation_center,
+                                   periodic=False,
                                    parallel=True
                                    )
 
@@ -116,7 +131,9 @@ class photosphere:
                     z_slice=0,
                     resolution=resolution,
                     project=f'{parameter}_mass_weighted',
-                    region=limits, rotation_matrix=matrix, rotation_center=center,
+                    region=limits, rotation_matrix=matrix,
+                    rotation_center=rotation_center,
+                    periodic=False,
                     parallel=True
                 )
 
@@ -145,6 +162,11 @@ class photosphere:
             data['h'] = angular_momenta
             data['matid'] = matids
 
+            # strip unyt units — everything is already in MKS
+            for key in list(data.keys()):
+                if hasattr(data[key], 'value'):
+                    data[key] = np.array(data[key])
+
             return data
 
         print('Loading data into photosphere model:')
@@ -159,8 +181,8 @@ class photosphere:
 
         # fixes an error with infinite pressure
         infinite_mask = np.isfinite(self.data['P'])
-        P_fix = fst.P_EOS(self.data['rho'], self.data['T'].value)
-        self.data['P'] = np.where(infinite_mask, self.data['P'], P_fix)
+        P_fix = fst.P_EOS(self.data['rho'], self.data['T'])
+        self.data['P'] = np.where(infinite_mask, np.array(self.data['P']), P_fix)
 
         max_size.convert_to_mks()
 
@@ -179,7 +201,7 @@ class photosphere:
 
         self.data['dr'] = np.roll(self.data['r'], -1, axis=1) - self.data['r']
         self.data['dr'][:, -1] = self.data['dr'][:, -2]
-        self.data['d_theta'] = np.full_like(self.data['dr'], np.pi / n_theta)
+        self.data['d_theta'] = np.full(self.data['dr'].shape, np.pi / n_theta)
 
         r, dr = self.data['r'], self.data['dr']
         theta, d_theta = self.data['theta'], self.data['d_theta']

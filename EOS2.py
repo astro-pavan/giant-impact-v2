@@ -8,7 +8,7 @@ import numpy as np
 np.set_printoptions(precision=4)
 
 from contourpy import contour_generator
-from scipy.interpolate import RegularGridInterpolator, CubicSpline, interp1d
+from scipy.interpolate import RegularGridInterpolator, CubicSpline, PchipInterpolator, interp1d
 
 import sys
 import os
@@ -53,10 +53,25 @@ P_critical_point, S_critical_point = NewEOS.cp.P * 1e9, NewEOS.cp.S * 1e6
 P_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.P.T, method='linear', bounds_error=False, fill_value=None)
 S_interp = RegularGridInterpolator((NewEOS.rho, NewEOS.T), NewEOS.S.T, method='linear', bounds_error=False, fill_value=None)
 
-rho_vc_v_interp = CubicSpline(NewEOS.vc.Pv[::-1], NewEOS.vc.rv[::-1], extrapolate=False)
-T_vc_v_interp = CubicSpline(NewEOS.vc.Pv[::-1], NewEOS.vc.T[::-1], extrapolate=False)
-S_vc_v_interp = CubicSpline(NewEOS.vc.Pv[::-1], NewEOS.vc.Sv[::-1], extrapolate=False)
-U_vc_v_interp = CubicSpline(NewEOS.vc.Pv[::-1], NewEOS.vc.Uv[::-1], extrapolate=False)
+# Build vapor-curve interpolators in log(P) space.  The 84-point table spans
+# 16 orders of magnitude in P; CubicSpline in linear-P space is ill-conditioned
+# and oscillates into negative T between adjacent table points.  PchipInterpolator
+# preserves monotonicity and log(P) spacing makes the knots near-uniform.
+_Pv_asc  = NewEOS.vc.Pv[::-1]   # ascending pressure
+_lPv_asc = np.log(_Pv_asc)
+
+rho_vc_v_interp = PchipInterpolator(_lPv_asc, NewEOS.vc.rv[::-1], extrapolate=False)
+T_vc_v_interp   = PchipInterpolator(_lPv_asc, NewEOS.vc.T[::-1],  extrapolate=False)
+S_vc_v_interp   = PchipInterpolator(_lPv_asc, NewEOS.vc.Sv[::-1], extrapolate=False)
+U_vc_v_interp   = PchipInterpolator(_lPv_asc, NewEOS.vc.Uv[::-1], extrapolate=False)
+
+# Store table-boundary values for below-range ideal-gas extrapolation
+_Pv_min  = _Pv_asc[0]
+_Tv_min  = NewEOS.vc.T[::-1][0]
+_rv_min  = NewEOS.vc.rv[::-1][0]
+_Sv_min  = NewEOS.vc.Sv[::-1][0]
+_Uv_min  = NewEOS.vc.Uv[::-1][0]
+_R_spec  = 8.314 / (NewEOS.FMW * 1e-3)   # J kg⁻¹ K⁻¹, specific gas constant
 
 S_vc = np.concatenate([[0], np.flip(NewEOS.vc.Sl), NewEOS.vc.Sv])
 P_vc = np.concatenate([[1e-7], np.flip(NewEOS.vc.Pl), NewEOS.vc.Pv])
@@ -111,17 +126,46 @@ def make_isentrope(s):
     isentrope = isentrope_generator.lines(s)[0]
 
     rho_isentrope = isentrope[:, 0]
-    T_isentrope = isentrope[:, 1]
+    T_isentrope   = isentrope[:, 1]
+    P_isentrope   = P_EOS(rho_isentrope, T_isentrope)
 
-    P_isentrope = P_EOS(rho_isentrope, T_isentrope)
+    # Sort by P and remove duplicates (the two-phase dome creates a plateau of
+    # identical P values that make the spline x-array non-strictly-increasing).
+    idx    = np.argsort(P_isentrope)
+    P_s    = P_isentrope[idx]
+    rho_s  = rho_isentrope[idx]
+    T_s    = T_isentrope[idx]
+    unique = np.concatenate(([True], np.diff(P_s) > 0))
+    P_s, rho_s, T_s = P_s[unique], rho_s[unique], T_s[unique]
 
-    rho_interpolator = CubicSpline(P_isentrope, rho_isentrope)
-    T_interpolator = CubicSpline(P_isentrope, T_isentrope)
+    # Build interpolators in log(P) space for the same reason as the vapor curve.
+    lP_s = np.log(np.maximum(P_s, 1e-300))
+    rho_interpolator = PchipInterpolator(lP_s, rho_s, extrapolate=True)
+    T_interpolator   = PchipInterpolator(lP_s, T_s,   extrapolate=True)
 
     return rho_interpolator, T_interpolator
 
 def vapor_curve(P):
-    return rho_vc_v_interp(P), T_vc_v_interp(P), S_vc_v_interp(P), U_vc_v_interp(P)
+    P = np.atleast_1d(np.asarray(P, dtype=float))
+    lP = np.log(np.maximum(P, 1e-300))
+
+    rho = rho_vc_v_interp(lP)
+    T   = T_vc_v_interp(lP)
+    s   = S_vc_v_interp(lP)
+    u   = U_vc_v_interp(lP)
+
+    # Ideal-gas extrapolation for P below the table minimum.
+    # At these pressures the vapour is dilute enough that ρ = P/(R_spec·T_min),
+    # T is roughly constant, and entropy rises as −R·ln(P).
+    below = P < _Pv_min
+    if np.any(below):
+        P_b          = P[below]
+        rho[below]   = P_b / (_R_spec * _Tv_min)
+        T[below]     = _Tv_min
+        s[below]     = _Sv_min + _R_spec * np.log(_Pv_min / P_b)
+        u[below]     = _Uv_min
+
+    return rho, T, s, u
 
 def phase(P, s):
     min_P = 1e-5  # pressures below this are invalid
